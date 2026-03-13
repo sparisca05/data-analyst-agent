@@ -1,9 +1,5 @@
 fastapi
 uvicorn
-psycopg2
-python-dotenv
-sqlalchemy
-asyncpg
-python-jose
-requests
+pandas
 openai
+python-multipart

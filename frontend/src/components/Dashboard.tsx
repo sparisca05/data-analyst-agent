@@ -14,7 +14,6 @@ type GeneratedProposal = {
 }
 
 function Dashboard() {
-	const [jobTitle, setJobTitle] = useState('')
 	const [jobDescription, setJobDescription] = useState('')
 	const [isGenerating, setIsGenerating] = useState(false)
 	const [generatedProposal, setGeneratedProposal] = useState<GeneratedProposal | null>(null)
@@ -22,51 +21,15 @@ function Dashboard() {
 	const [showHistory, setShowHistory] = useState(false)
 	const [copied, setCopied] = useState(false)
 
-	useEffect(() => {
-
-	}, [window.location.href]) // Reload history when the component mounts or when the URL changes
-
-	const handleGenerateProposal = async (e: React.FormEvent<HTMLFormElement>) => {
-		e.preventDefault()
-
-		try {
-			setIsGenerating(true)
-
-			const savedJob = await fetch('/save_job', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ title: jobTitle, description: jobDescription }),
-			})
-
-			const result = await fetch('/generate', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ job_id: savedJob.job_id }),
-			})
-
-			const proposal: GeneratedProposal = {
-				proposal_id: result.id,
-				job_id: savedJob.job_id,
-				title: jobTitle,
-				proposal_text: result.proposal_text,
-				timeline_estimate: result.timeline_estimate,
-				questions: result.questions,
-				difficulty_level: result.difficulty_level,
-				match_score: result.match_score,
-				key_skills: result.key_skills,
-				estimated_budget_range: result.estimated_budget_range,
-			}
-
-			setGeneratedProposal(proposal)
-			setProposalHistory([proposal, ...proposalHistory])
-			setJobDescription('')
-			setJobTitle('')
-		} catch (err) {
-			const errorMsg = err instanceof Error ? err.message : 'Failed to generate proposal'
-			setFetchError(errorMsg)
-		} finally {
-			setIsGenerating(false)
+	const handleUploadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+		const file = e.target.files?.[0]
+		if (!file) return
+		const reader = new FileReader()
+		reader.onload = (event) => {
+			const text = event.target?.result as string
+			setJobDescription(text)
 		}
+		reader.readAsText(file)
 	}
 
 	const handleCopy = async () => {
@@ -143,68 +106,7 @@ function Dashboard() {
 						<p style={{ margin: '0 0 1.25rem 0', color: '#888', fontSize: '0.85rem', textAlign: 'left' }}>
 							Fill in the job details and let AI craft your proposal
 						</p>
-						<form onSubmit={handleGenerateProposal} style={{ display: 'grid', gap: '1rem' }}>
-							<div>
-								<label htmlFor="jobTitle" style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', textAlign: 'left', fontSize: '0.9rem' }}>
-									Job Title
-								</label>
-								<input
-									type="text"
-									id="jobTitle"
-									value={jobTitle}
-									onChange={(e) => setJobTitle(e.target.value)}
-									placeholder="e.g. Full-Stack Developer for SaaS Platform"
-									style={{
-										width: '100%',
-										border: '1px solid #d0d0d0',
-										borderRadius: '8px',
-										padding: '0.75rem 1rem',
-										fontSize: '0.95rem',
-										fontFamily: 'inherit',
-										boxSizing: 'border-box',
-										transition: 'border-color 0.2s',
-									}}
-									onFocus={(e) => e.target.style.borderColor = '#1f5eff'}
-									onBlur={(e) => e.target.style.borderColor = '#d0d0d0'}
-									required
-								/>
-							</div>
-							<div>
-								<label htmlFor="jobDescription" style={{ display: 'block', fontWeight: 600, marginBottom: '0.4rem', textAlign: 'left', fontSize: '0.9rem' }}>
-									Job Description
-								</label>
-								<textarea
-									id="jobDescription"
-									value={jobDescription}
-									onChange={(e) => setJobDescription(e.target.value)}
-									placeholder="Paste the full job description or requirements here..."
-									minLength={10}
-									rows={10}
-									style={{
-										width: '100%',
-										border: '1px solid #d0d0d0',
-										borderRadius: '8px',
-										padding: '0.75rem 1rem',
-										fontSize: '0.95rem',
-										fontFamily: 'inherit',
-										resize: 'vertical',
-										boxSizing: 'border-box',
-										transition: 'border-color 0.2s',
-									}}
-									onFocus={(e) => e.target.style.borderColor = '#1f5eff'}
-									onBlur={(e) => e.target.style.borderColor = '#d0d0d0'}
-									required
-								/>
-							</div>
-							<button
-								className="button"
-								type="submit"
-								disabled={isGenerating}
-								style={{ marginTop: '0.5rem', padding: '0.85rem', fontSize: '1rem' }}
-							>
-								{isGenerating ? '⏳ Generating proposal...' : '✨ Generate Proposal'}
-							</button>
-						</form>
+						
 					</section>
 
 					{/* Generated Proposal Result */}
