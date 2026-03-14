@@ -4,3 +4,4 @@ pandas
 openai
 python-multipart
 dotenv
+numpy

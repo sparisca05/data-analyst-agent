@@ -4,8 +4,8 @@ from fastapi import FastAPI, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import shutil
-from app.agent import clear_conversations, run_agent
-from app.tools import load_dataset
+from app.agent.agent import clear_conversations, run_agent
+from app.utils import load_dataset
 
 app = FastAPI()
 
