@@ -1,15 +1,19 @@
 import pandas as pd
 import numpy as np
 
-def set_file_url(conversation_id, url):
-    global FILE_URL
-    FILE_URL = {conversation_id: url}
+DATASET_CACHE = {}
 
-def get_file_url(conversation_id):
-    return FILE_URL.get(conversation_id)
+def get_dataset(url):
+   
+    if url not in DATASET_CACHE:
+        df = pd.read_csv(url)
+        DATASET_CACHE[url] = df
 
-def load_dataset(path: str):
-    df = pd.read_csv(path)
+    return DATASET_CACHE[url]
+
+
+def profile_dataset(url):
+    df = get_dataset(url)
 
     numeric = df.select_dtypes(include="number")
     categorical = df.select_dtypes(exclude="number")
@@ -62,30 +66,5 @@ def load_dataset(path: str):
         ]
 
     results["top_correlations"] = top_correlations
-
-    # histograms
-    histograms = []
-
-    for col in numeric.columns[:5]:
-
-        counts, bins = np.histogram(df[col], bins=10)
-
-        histograms.append({
-            "type": "histogram",
-            "column": col,
-            "labels": bins[:-1].tolist(),
-            "data": counts.tolist()
-        })
-
-    results["histograms"] = histograms
-
-    # Store the dataset info in the global DATASETS list
-    dataset_info = {
-        "rows": results["rows"],
-        "columns": results["columns"],
-        "summary": results["summary"],
-        "missing_values": results["missing_values"],
-        "top_correlations": results["top_correlations"],
-    }
 
     return results

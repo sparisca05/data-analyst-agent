@@ -2,10 +2,8 @@ import json
 from openai import OpenAI
 from typing import Dict, List
 
-from app.tools import dataset_schema, describe_dataset, generate_chart_data, groupby_analysis
-from app.agent.tool_specs import tools
-from app.agent.tool_registry import TOOL_REGISTRY
 from config import OPENAI_API_KEY
+from app.mcp_client import call_tool, list_tools
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -34,6 +32,8 @@ SYSTEM_PROMPT = """
         - Use the minimal number of tool calls needed.
         - Once the necessary data is retrieved, explain the result clearly.
         - If the user asks for a visualization, generate chart-ready data using the chart tool.
+    
+    ONLY RETRIEVE THE FINAL ANSWER AFTER CALLING THE TOOLS NEEDED TO CONFIRM THE DATA INSIGHTS.
 """
 
 CONVERSATIONS: Dict[str, List[dict]] = {}
@@ -41,48 +41,61 @@ CONVERSATIONS: Dict[str, List[dict]] = {}
 def clear_conversations():
     CONVERSATIONS.clear()
 
-def run_agent(user_input, conversation_id = "default"):
+def run_agent(user_input, conversation_id = "default", file_url = None):
+    TOOLS = list_tools()
+    tool_called = False
 
     history = CONVERSATIONS.get(conversation_id, [])
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "system", "content": f"Current conversation ID: {conversation_id}"},
         *history,
         {"role": "user", "content": user_input},
     ]
 
     history.append({"role": "user", "content": user_input})
 
-    while True:
+    for n in range (8):
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
-            tools=tools,
+            tools=TOOLS,
             max_completion_tokens=200,
         )
 
         message = response.choices[0].message
+        print("Agent response:", message)
 
         if not message.tool_calls:
-            messages.append(message)
+            if not tool_called:
+                messages.append({
+                    "role": "assistant",
+                    "content": message.content
+                })
+                continue
             return message.content
 
-        # el modelo quiere usar tools
+        tool_called = True
+
         for tool_call in message.tool_calls:
 
             tool_name = tool_call.function.name
             args = json.loads(tool_call.function.arguments)
+            args["url"] = file_url
 
-            tool_function = TOOL_REGISTRY[tool_name]
+            messages.append({
+                "role": "assistant",
+                "content": message.content or "",
+                "tool_calls": message.tool_calls
+            })
 
-            result = tool_function(**args)
-
-            messages.append(message)
+            result = call_tool(tool_name, args)
 
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
-                "content": json.dumps(result)
+                "content": json.dumps(result),
             })
+
+clear_conversations()

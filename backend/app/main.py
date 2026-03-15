@@ -1,13 +1,19 @@
 import os
+import shutil
+from supabase import create_client
 from typing import Optional
 from fastapi import FastAPI, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import shutil
-from app.agent.agent import clear_conversations, run_agent
-from app.utils import load_dataset
+
+from app.agent import clear_conversations, run_agent
+from app.utils import load_dataset, set_file_url, get_file_url
+
+from config import SUPABASE_URL, SUPABASE_KEY
 
 app = FastAPI()
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 
 # Enable CORS to allow frontend requests
 app.add_middleware(
@@ -25,14 +31,25 @@ def root():
 @app.post("/upload")
 def upload_file_endpoint(file: UploadFile, conversation_id: Optional[str] = "default"):
     """Upload a file and process its content"""
-    path = f"datasets/{file.filename}"
-    os.makedirs("datasets", exist_ok=True)
+
+    path = f"tmp/{file.filename}"
+    os.makedirs("tmp", exist_ok=True)
 
     with open(path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    load_result = load_dataset(path=path, conversation_id=conversation_id)
+    load_result = load_dataset(path=path)
     clear_conversations()
+
+    try:
+        storage_path = f"{file.filename}_{conversation_id}"
+        with open(path, "rb") as dataset_file:
+            supabase.storage.from_("datasets").upload(storage_path, dataset_file.read())
+            file_url = supabase.storage.from_("datasets").get_public_url(storage_path)
+            set_file_url(conversation_id=conversation_id, url=file_url)
+    except Exception as e:
+        print(f"Error uploading file to Supabase: {e}")
+        return {"status": "error uploading file"}
 
     return {"status": "dataset loaded", "dataset": load_result}
 
@@ -43,7 +60,7 @@ class ChatRequest(BaseModel):
 
 @app.post("/chat")
 async def chat(payload: ChatRequest):
+    file_url = get_file_url(conversation_id=payload.conversation_id)
+    result = run_agent(payload.query, conversation_id=payload.conversation_id, file_url=file_url)
 
-    result = run_agent(payload.query, conversation_id=payload.conversation_id or "default")
-
-    return {"response": result, "conversation_id": payload.conversation_id or "default"}
+    return {"response": result, "conversation_id": payload.conversation_id}

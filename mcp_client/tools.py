@@ -1,40 +1,40 @@
 import pandas as pd
 import numpy as np
 
-from app.utils import RAW_DATASETS, _get_dataset_entry
+from utils import get_dataset, profile_dataset
 
-def describe_dataset(conversation_id: str = "default"):
+def describe_dataset(url):
     """
     Provides an overview of the dataset, including number of rows, columns,
     summary statistics for numeric and categorical variables, missing values,
     and top correlations.
     """
-    entry = _get_dataset_entry(conversation_id)
-    if entry is None:
+    profiled_dataset = profile_dataset(url)
+    if profiled_dataset is None:
         return "No dataset loaded for this conversation"
 
     return {
-        "conversation_id": entry["conversation_id"],
-        "dataset_info": entry["dataset_info"],
+        "conversation_id": profiled_dataset["conversation_id"],
+        "dataset_info": profiled_dataset["dataset_info"],
     }
 
 
-def groupby_analysis(conversation_id: str, group_by: str, metric: str, aggregation: str):
+def groupby_analysis(url: str, group_by: str, metric: str, aggregation: str):
     """
     Performs a groupby analysis on the dataset, grouping by the specified column
     and calculating the specified metric (e.g., mean, sum) using the specified aggregation function.
     """
-    entry = RAW_DATASETS.get(conversation_id)
-    if entry is None:
+    dataset = get_dataset(url)
+    if dataset is None:
         return "No dataset loaded for this conversation"
 
-    if group_by not in entry.columns:
+    if group_by not in dataset.columns:
         return f"Column {group_by} not found in dataset"
     
-    if metric not in entry.columns:
+    if metric not in dataset.columns:
         return {"error": f"{metric} not found"}
     
-    grouped = entry.groupby(group_by)[metric]
+    grouped = dataset.groupby(group_by)[metric]
 
     if aggregation == "mean":
         result = grouped.mean()
@@ -57,21 +57,21 @@ def groupby_analysis(conversation_id: str, group_by: str, metric: str, aggregati
     return result.to_dict()
 
 
-def detect_outliers(conversation_id: str, column: str):
+def detect_outliers(url: str, column: str):
     """
     Detects outliers in a numeric column using z-score method.
     """
-    entry = RAW_DATASETS.get(conversation_id)
-    if entry is None:
+    dataset = get_dataset(url)
+    if dataset is None:
         return "No dataset loaded for this conversation"
 
-    if column not in entry.columns:
+    if column not in dataset.columns:
         return f"Column {column} not found in dataset"
 
-    if not pd.api.types.is_numeric_dtype(entry[column]):
+    if not pd.api.types.is_numeric_dtype(dataset[column]):
         return f"Column {column} is not numeric"
 
-    col_data = entry[column].dropna()
+    col_data = dataset[column].dropna()
     mean = col_data.mean()
     std = col_data.std()
 
@@ -85,20 +85,20 @@ def detect_outliers(conversation_id: str, column: str):
     }
 
 
-def generate_chart_data(conversation_id: str, chart_type: str, column: str):
+def generate_chart_data(url: str, chart_type: str, column: str):
     """
     Generates data for different chart type (histogram, bar) of a specific column.
     """
-    entry = RAW_DATASETS.get(conversation_id)
-    if entry is None:
+    dataset = get_dataset(url)
+    if dataset is None:
         return "No dataset loaded for this conversation"
 
-    if column not in entry.columns:
+    if column not in dataset.columns:
         return f"Column {column} not found in dataset"
 
     if chart_type == "histogram":
 
-        counts, bins = np.histogram(entry[column], bins=10)
+        counts, bins = np.histogram(dataset[column], bins=10)
 
         return {
             "type": "histogram",
@@ -109,7 +109,7 @@ def generate_chart_data(conversation_id: str, chart_type: str, column: str):
 
     elif chart_type == "bar":
 
-        counts = entry[column].value_counts().head(10)
+        counts = dataset[column].value_counts().head(10)
 
         return {
             "type": "bar",
@@ -122,16 +122,16 @@ def generate_chart_data(conversation_id: str, chart_type: str, column: str):
         return {"error": "unsupported chart type"}
     
 
-def dataset_schema(conversation_id: str):
+def dataset_schema(url: str):
     """Returns the dataset schema, including column names and data types."""
 
-    entry = RAW_DATASETS.get(conversation_id)
-    if entry is None:
+    dataset = get_dataset(url)
+    if dataset is None:
         return "No dataset loaded for this conversation"
 
     return {
         "columns": {
-            col: str(entry[col].dtype)
-            for col in entry.columns
+            col: str(dataset[col].dtype)
+            for col in dataset.columns
         }
     }

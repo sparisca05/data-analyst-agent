@@ -8,22 +8,22 @@ tools = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "conversation_id": {"type": "string"}
+                    "url": {"type": "string"}
                 },
-                "required": ["conversation_id"]
+                "required": ["url"]
             }
         }
     },
 
     {
-    "type": "function",
+        "type": "function",
         "function": {
             "name": "groupby_analysis",
             "description": "Aggregate a metric grouped by a column",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "conversation_id": {"type": "string"},
+                    "url": {"type": "string"},
                     "group_by": {"type": "string"},
                     "metric": {"type": "string"},
                     "aggregation": {
@@ -31,7 +31,7 @@ tools = [
                         "enum": ["mean","sum","max","min","count"]
                     }
                 },
-                "required": ["conversation_id","group_by","metric","aggregation"]
+                "required": ["url","group_by","metric","aggregation"]
             }
         }
     },
@@ -44,30 +44,45 @@ tools = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "conversation_id": {"type": "string"},
+                    "url": {"type": "string"},
                     "column": {"type": "string"}
                 },
-                "required": ["conversation_id", "column"]
+                "required": ["url", "column"]
             }
         }
     },
 
     {
-    "type": "function",
+        "type": "function",
         "function": {
             "name": "generate_chart_data",
             "description": "Generate data for a chart",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "url": {"type": "string"},
                     "chart_type": {
                         "type": "string",
                         "enum": ["histogram","bar"]
                     },
-                    "conversation_id": {"type": "string"},
                     "column": {"type": "string"}
                 },
-                "required": ["conversation_id", "chart_type","column"]
+                "required": ["url", "chart_type","column"]
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "dataset_schema",
+            "description": "Returns the dataset schema, including column names and data types",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"}
+                },
+                "required": ["url"]
             }
         }
     }
