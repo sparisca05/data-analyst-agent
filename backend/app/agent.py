@@ -9,31 +9,20 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 SYSTEM_PROMPT = """
-    You are a data analyst agent.
+    You are an expert AI Data Analyst Agent.
 
     You must decide which tool to use to answer the user question.
 
     Rules:
         - Always rely on tools to retrieve information from the dataset.
         - Do NOT invent columns, values, or statistics.
-        - If a question requires computation or aggregation, call the appropriate tool.
-        - If you do not know the dataset schema yet, call the tool that provides the dataset structure.
-        - When possible, return structured insights that can be visualized in charts.
-    
-    Available capabilities include:
-        - Descriptive statistics
-        - Grouped aggregations
-        - Outlier detection
-        - Generating data structures for charts
 
     When answering:
         - Give short, concise answers.
         - Prefer tool calls over guessing.
         - Use the minimal number of tool calls needed.
-        - Once the necessary data is retrieved, explain the result clearly.
+        - Once the necessary data is retrieved, explain the result clearly and give your interpretation.
         - If the user asks for a visualization, generate chart-ready data using the chart tool.
-    
-    ONLY RETRIEVE THE FINAL ANSWER AFTER CALLING THE TOOLS NEEDED TO CONFIRM THE DATA INSIGHTS.
 """
 
 CONVERSATIONS: Dict[str, List[dict]] = {}
@@ -65,7 +54,6 @@ def run_agent(user_input, conversation_id = "default", file_url = None):
         )
 
         message = response.choices[0].message
-        print("Agent response:", message)
 
         if not message.tool_calls:
             if not tool_called:
@@ -74,7 +62,10 @@ def run_agent(user_input, conversation_id = "default", file_url = None):
                     "content": message.content
                 })
                 continue
-            return message.content
+            return {
+                "type": "text",
+                "content": message.content
+            }
 
         tool_called = True
 
@@ -91,6 +82,12 @@ def run_agent(user_input, conversation_id = "default", file_url = None):
             })
 
             result = call_tool(tool_name, args)
+
+            if tool_name == "generate_chart": # special handling for charts to return data in a structured way
+                return {
+                    "type": "chart",
+                    "data": result
+                }
 
             messages.append({
                 "role": "tool",

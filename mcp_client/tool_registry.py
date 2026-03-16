@@ -1,15 +1,17 @@
 from tools import (
-    dataset_schema,
     describe_dataset,
-    groupby_analysis,
+    query_dataset,
+    generate_chart,
     detect_outliers,
-    generate_chart_data
+    compute_correlation,
+    generate_insights
 )
 
 TOOLS = {
     "describe_dataset": describe_dataset,
-    "groupby_analysis": groupby_analysis,
+    "query_dataset": query_dataset,
+    "generate_chart": generate_chart,
     "detect_outliers": detect_outliers,
-    "generate_chart_data": generate_chart_data,
-    "dataset_schema": dataset_schema,
+    "compute_correlation": compute_correlation,
+    "generate_insights": generate_insights
 }

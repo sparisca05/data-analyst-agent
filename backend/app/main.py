@@ -42,7 +42,7 @@ def upload_file_endpoint(file: UploadFile, conversation_id: Optional[str] = "def
     clear_conversations()
 
     try:
-        storage_path = f"{file.filename}_{conversation_id}"
+        storage_path = f"{conversation_id}_{file.filename}"
         with open(path, "rb") as dataset_file:
             supabase.storage.from_("datasets").upload(storage_path, dataset_file.read())
             file_url = supabase.storage.from_("datasets").get_public_url(storage_path)

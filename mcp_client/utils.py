@@ -42,17 +42,18 @@ def profile_dataset(url):
 
     # correlation
     corr = numeric.corr() if numeric.shape[1] >= 2 else pd.DataFrame()
-
-    results["correlation_chart"] = {
-        "type": "heatmap",
-        "labels": list(corr.columns),
-        "data": corr.values.tolist()
-    }
-
+    
     top_correlations = []
     if not corr.empty:
         corr_pairs = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool)).stack().reset_index()
         corr_pairs.columns = ["col_1", "col_2", "correlation"]
+        corr_pairs = corr_pairs[corr_pairs["col_1"] != corr_pairs["col_2"]]
+        corr_pairs = corr_pairs[np.isfinite(corr_pairs["correlation"])]
+        corr_pairs["pair_key"] = corr_pairs.apply(
+            lambda row: "||".join(sorted((str(row["col_1"]), str(row["col_2"])))),
+            axis=1,
+        )
+        corr_pairs = corr_pairs.drop_duplicates(subset=["pair_key"]).drop(columns=["pair_key"])
         corr_pairs["abs_correlation"] = corr_pairs["correlation"].abs()
         top_pairs = corr_pairs.sort_values("abs_correlation", ascending=False).head(5)
 

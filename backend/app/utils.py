@@ -1,12 +1,39 @@
 import pandas as pd
 import numpy as np
 
+FILE_URL_CACHE = {}
+
+def _json_safe(value):
+    """Recursively convert pandas/numpy values to JSON-safe Python values."""
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+
+    if isinstance(value, np.integer):
+        return int(value)
+
+    if isinstance(value, np.floating):
+        value = float(value)
+        return value if np.isfinite(value) else None
+
+    if value is pd.NA:
+        return None
+
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
+
+    return value
+
 def set_file_url(conversation_id, url):
-    global FILE_URL
-    FILE_URL = {conversation_id: url}
+    FILE_URL_CACHE[conversation_id] = url
 
 def get_file_url(conversation_id):
-    return FILE_URL.get(conversation_id)
+    return FILE_URL_CACHE.get(conversation_id)
 
 def load_dataset(path: str):
     df = pd.read_csv(path)
@@ -49,6 +76,13 @@ def load_dataset(path: str):
     if not corr.empty:
         corr_pairs = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool)).stack().reset_index()
         corr_pairs.columns = ["col_1", "col_2", "correlation"]
+        corr_pairs = corr_pairs[corr_pairs["col_1"] != corr_pairs["col_2"]]
+        corr_pairs = corr_pairs[np.isfinite(corr_pairs["correlation"])]
+        corr_pairs["pair_key"] = corr_pairs.apply(
+            lambda row: "||".join(sorted((str(row["col_1"]), str(row["col_2"])))),
+            axis=1,
+        )
+        corr_pairs = corr_pairs.drop_duplicates(subset=["pair_key"]).drop(columns=["pair_key"])
         corr_pairs["abs_correlation"] = corr_pairs["correlation"].abs()
         top_pairs = corr_pairs.sort_values("abs_correlation", ascending=False).head(5)
 
@@ -88,4 +122,4 @@ def load_dataset(path: str):
         "top_correlations": results["top_correlations"],
     }
 
-    return results
+    return _json_safe(results)
