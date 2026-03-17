@@ -97,7 +97,15 @@ tools = [
                     "url": {"type": "string"},
                     "chart_type": {
                         "type": "string",
-                        "enum": ["bar", "scatter", "histogram"]
+                        "enum": ["bar", "scatter", "histogram", "line", "doughnut"],
+                        "description": """Type of chart to generate.
+                            If the user doesn't specify a chart type:
+                            Use 'bar' for categorical comparisons,
+                            'scatter' for relationships between two numeric variables,
+                            'histogram' for distributions of a single numeric variable,
+                            'line' for trends over an ordered variable (like time),
+                            and 'doughnut' for proportions of a categorical variable.
+                        """
                     },
                     "x": {
                         "type": "string",

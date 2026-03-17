@@ -47,6 +47,8 @@ type ChartPoint = {
 	y: number | string
 }
 
+type SupportedChatChartType = 'bar' | 'scatter' | 'line' | 'pie' | 'doughnut'
+
 type ChartDataset = {
 	label?: string
 	data: Array<number | string | ChartPoint>
@@ -234,11 +236,13 @@ function Dashboard() {
 
 		try {
 			const extension = getFileExtension(file.name)
+			console.log('Selected file extension:', extension)
 			if (!SUPPORTED_EXTENSIONS.includes(extension)) {
 				throw new Error('Unsupported format. Please upload .csv, .xlsx, or .xls files.')
 			}
 
 			const parsedRows = await parseDatasetFile(file)
+			console.log('Parsed rows:', parsedRows.length)
 			if (parsedRows.length === 0) {
 				throw new Error('The dataset is empty or could not be parsed.')
 			}
@@ -252,7 +256,6 @@ function Dashboard() {
 
 			const formData = new FormData()
 			formData.append('file', file)
-
 			const uploadResponse = await fetch(
 				`${apiBaseUrl}/upload?conversation_id=${encodeURIComponent(nextConversationId)}`,
 				{
@@ -570,9 +573,14 @@ function CorrelationHeatmap({ heatmap }: { heatmap: HeatmapData }) {
 function ChatChart({ message }: { message: ChatMessage }) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null)
 	const chartRef = useRef<Chart<ChartType, unknown[], unknown> | null>(null)
+	const prepared = useMemo(() => prepareChatChart(message), [message])
 
 	useEffect(() => {
-		if (!canvasRef.current || !message.datasets || message.datasets.length === 0) {
+		if (!canvasRef.current || !prepared.ok) {
+			if (chartRef.current) {
+				chartRef.current.destroy()
+				chartRef.current = null
+			}
 			return
 		}
 
@@ -580,38 +588,17 @@ function ChatChart({ message }: { message: ChatMessage }) {
 			chartRef.current.destroy()
 		}
 
-		const chartType = message.type || inferChartType(message.datasets)
-		const { scales, labels } = buildChartAxes(message.datasets, message.labels, chartType)
-		const normalizedDatasets = message.datasets.map((dataset) => {
-			if (chartType === 'bar') {
-				return {
-					...dataset,
-					borderRadius: 6,
-				}
-			}
-
-			if (chartType === 'scatter') {
-				return {
-					...dataset,
-					showLine: dataset.showLine ?? false,
-					pointRadius: dataset.pointRadius ?? 4,
-				}
-			}
-
-			return dataset
-		})
-
 		chartRef.current = new Chart(canvasRef.current, {
-			type: chartType,
+			type: prepared.type,
 			data: {
-				labels,
-				datasets: normalizedDatasets,
+				labels: prepared.labels,
+				datasets: prepared.datasets,
 			},
 			options: {
 				responsive: true,
 				maintainAspectRatio: false,
-				plugins: { legend: { display: normalizedDatasets.length > 1 } },
-				scales,
+				plugins: { legend: { display: prepared.legendDisplay } },
+				scales: prepared.scales as never,
 				animation: {
 					duration: 500,
 					easing: 'easeOutQuart',
@@ -625,67 +612,87 @@ function ChatChart({ message }: { message: ChatMessage }) {
 				chartRef.current = null
 			}
 		}
-	}, [message.datasets, message.labels, message.type])
+	}, [prepared])
+
+	if (!prepared.ok) {
+		return <p className="no-chart">{prepared.reason}</p>
+	}
 
 	return <canvas ref={canvasRef} aria-label={message.text} />
 }
 
-function inferChartType(datasets: ChartDataset[]): ChartType {
-	if (datasets.some((dataset) => hasPointData(dataset.data))) {
-		return 'scatter'
+type PreparedChartResult =
+	| {
+			ok: true
+			type: SupportedChatChartType
+			labels?: string[]
+			datasets: ChartDataset[]
+			scales?: Record<string, unknown>
+			legendDisplay: boolean
+	  }
+	| {
+			ok: false
+			reason: string
+	  }
+
+function prepareChatChart(message: ChatMessage): PreparedChartResult {
+	if (!message.datasets || message.datasets.length === 0) {
+		return { ok: false, reason: 'Chart data is missing datasets.' }
 	}
-	return 'bar'
-}
 
-function hasPointData(data: Array<number | string | ChartPoint>): boolean {
-	return data.some((value) => isChartPoint(value))
-}
+	const chartType = normalizeChartType(message.type, message.datasets)
+	if (!chartType) {
+		return { ok: false, reason: `Unsupported chart type: ${String(message.type)}.` }
+	}
 
-function isChartPoint(value: number | string | ChartPoint): value is ChartPoint {
-	return typeof value === 'object' && value !== null && 'x' in value && 'y' in value
-}
-
-function buildChartAxes(
-	datasets: ChartDataset[],
-	messageLabels: string[] | undefined,
-	chartType: ChartType,
-): { labels?: string[]; scales: object } {
 	if (chartType === 'scatter') {
-		const points = datasets
-			.flatMap((dataset) => dataset.data)
-			.filter((value): value is ChartPoint => isChartPoint(value))
+		return prepareScatterChart(message.datasets)
+	}
 
-		const xValues = points.map((point) => point.x)
-		const yValues = points.map((point) => point.y)
-		const xType = inferAxisType(xValues)
-		const yType = inferAxisType(yValues)
+	if (chartType === 'line') {
+		return prepareLineChart(message.datasets, message.labels)
+	}
 
-		return {
-			scales: {
-				x: {
-					type: xType,
-					ticks: {
-						autoSkip: true,
-						maxRotation: 0,
-						minRotation: 0,
-						maxTicksLimit: 8,
-					},
-				},
-				y: {
-					type: yType,
-					ticks: {
-						autoSkip: true,
-						maxRotation: 0,
-						minRotation: 0,
-						maxTicksLimit: 8,
-					},
-				},
-			},
-		}
+	if (chartType === 'pie' || chartType === 'doughnut') {
+		return prepareRadialChart(chartType, message.datasets, message.labels)
+	}
+
+	return prepareBarChart(message.datasets, message.labels)
+}
+
+function normalizeChartType(type: ChartType | undefined, datasets: ChartDataset[]): SupportedChatChartType | null {
+	if (!type) {
+		return inferChartType(datasets)
+	}
+
+	if (type === 'bar' || type === 'scatter' || type === 'line' || type === 'pie' || type === 'doughnut') {
+		return type
+	}
+
+	return null
+}
+
+function prepareBarChart(datasets: ChartDataset[], labels: string[] | undefined): PreparedChartResult {
+	const parsed = parseSeriesDatasets(datasets)
+	if (!parsed.ok) {
+		return parsed
+	}
+
+	const datasetLength = parsed.datasets[0]?.data.length ?? 0
+	const safeLabels = labels && labels.length > 0 ? labels : buildDefaultLabels(datasetLength)
+
+	if (safeLabels.length !== datasetLength) {
+		return { ok: false, reason: 'Bar chart labels length must match dataset values length.' }
 	}
 
 	return {
-		labels: messageLabels,
+		ok: true,
+		type: 'bar',
+		labels: safeLabels,
+		datasets: parsed.datasets.map((dataset) => ({
+			...dataset,
+			borderRadius: 6,
+		})),
 		scales: {
 			x: {
 				ticks: {
@@ -700,7 +707,209 @@ function buildChartAxes(
 				ticks: { precision: 0 },
 			},
 		},
+		legendDisplay: parsed.datasets.length > 1,
 	}
+}
+
+function prepareScatterChart(datasets: ChartDataset[]): PreparedChartResult {
+	const resolvedDatasets: ChartDataset[] = []
+
+	for (const dataset of datasets) {
+		const points = dataset.data.filter((value): value is ChartPoint => isChartPoint(value))
+		if (points.length !== dataset.data.length || points.length === 0) {
+			return { ok: false, reason: 'Scatter chart requires each dataset item to be an {x, y} point.' }
+		}
+
+		resolvedDatasets.push({
+			...dataset,
+			data: points,
+			showLine: dataset.showLine ?? false,
+			pointRadius: dataset.pointRadius ?? 4,
+		})
+	}
+
+	const points = resolvedDatasets.flatMap((dataset) => dataset.data as ChartPoint[])
+	const xType = inferAxisType(points.map((point) => point.x))
+	const yType = inferAxisType(points.map((point) => point.y))
+
+	return {
+		ok: true,
+		type: 'scatter',
+		datasets: resolvedDatasets,
+		scales: {
+			x: {
+				type: xType,
+				ticks: {
+					autoSkip: true,
+					maxRotation: 0,
+					minRotation: 0,
+					maxTicksLimit: 8,
+				},
+			},
+			y: {
+				type: yType,
+				ticks: {
+					autoSkip: true,
+					maxRotation: 0,
+					minRotation: 0,
+					maxTicksLimit: 8,
+				},
+			},
+		},
+		legendDisplay: resolvedDatasets.length > 1,
+	}
+}
+
+function prepareLineChart(datasets: ChartDataset[], labels: string[] | undefined): PreparedChartResult {
+	const hasPointSeries = datasets.some((dataset) => hasPointData(dataset.data))
+
+	if (hasPointSeries) {
+		const scatterLike = prepareScatterChart(datasets)
+		if (!scatterLike.ok) {
+			return { ok: false, reason: 'Line chart point mode requires each item to be a valid {x, y} point.' }
+		}
+
+		return {
+			...scatterLike,
+			type: 'line',
+			datasets: scatterLike.datasets.map((dataset) => ({
+				...dataset,
+				showLine: true,
+				pointRadius: dataset.pointRadius ?? 3,
+			})),
+		}
+	}
+
+	const parsed = parseSeriesDatasets(datasets)
+	if (!parsed.ok) {
+		return parsed
+	}
+
+	const datasetLength = parsed.datasets[0]?.data.length ?? 0
+	const safeLabels = labels && labels.length > 0 ? labels : buildDefaultLabels(datasetLength)
+	if (safeLabels.length !== datasetLength) {
+		return { ok: false, reason: 'Line chart labels length must match dataset values length.' }
+	}
+
+	return {
+		ok: true,
+		type: 'line',
+		labels: safeLabels,
+		datasets: parsed.datasets.map((dataset) => ({
+			...dataset,
+			pointRadius: dataset.pointRadius ?? 3,
+			showLine: dataset.showLine ?? true,
+		})),
+		scales: {
+			x: {
+				ticks: {
+					autoSkip: true,
+					maxRotation: 0,
+					minRotation: 0,
+					maxTicksLimit: 8,
+				},
+			},
+			y: {
+				ticks: { precision: 2 },
+			},
+		},
+		legendDisplay: parsed.datasets.length > 1,
+	}
+}
+
+function prepareRadialChart(
+	type: 'pie' | 'doughnut',
+	datasets: ChartDataset[],
+	labels: string[] | undefined,
+): PreparedChartResult {
+	const parsed = parseSeriesDatasets(datasets)
+	if (!parsed.ok) {
+		return { ok: false, reason: `${type} chart requires numeric series data.` }
+	}
+
+	const datasetLength = parsed.datasets[0]?.data.length ?? 0
+	const safeLabels = labels && labels.length > 0 ? labels : buildDefaultLabels(datasetLength)
+	if (safeLabels.length !== datasetLength) {
+		return { ok: false, reason: `${type} chart labels length must match dataset values length.` }
+	}
+
+	return {
+		ok: true,
+		type,
+		labels: safeLabels,
+		datasets: parsed.datasets,
+		legendDisplay: true,
+	}
+}
+
+function parseSeriesDatasets(
+	datasets: ChartDataset[],
+): { ok: true; datasets: ChartDataset[] } | { ok: false; reason: string } {
+	const parsedDatasets: ChartDataset[] = []
+
+	for (const dataset of datasets) {
+		if (dataset.data.length === 0) {
+			return { ok: false, reason: 'One of the chart datasets is empty.' }
+		}
+
+		const values: number[] = []
+		for (const value of dataset.data) {
+			if (isChartPoint(value)) {
+				return { ok: false, reason: 'Point data was provided where numeric series data was expected.' }
+			}
+
+			const parsed = toFiniteNumber(value)
+			if (parsed === null) {
+				return { ok: false, reason: 'Found non-numeric series values that cannot be plotted.' }
+			}
+			values.push(parsed)
+		}
+
+		parsedDatasets.push({
+			...dataset,
+			data: values,
+		})
+	}
+
+	const expectedLength = parsedDatasets[0]?.data.length ?? 0
+	if (!parsedDatasets.every((dataset) => dataset.data.length === expectedLength)) {
+		return { ok: false, reason: 'All datasets for this chart must have the same number of values.' }
+	}
+
+	return { ok: true, datasets: parsedDatasets }
+}
+
+function buildDefaultLabels(length: number): string[] {
+	return Array.from({ length }, (_, index) => `Item ${index + 1}`)
+}
+
+function toFiniteNumber(value: number | string): number | null {
+	if (typeof value === 'number') {
+		return Number.isFinite(value) ? value : null
+	}
+
+	const trimmed = value.trim()
+	if (!trimmed) {
+		return null
+	}
+
+	const numeric = Number(trimmed)
+	return Number.isFinite(numeric) ? numeric : null
+}
+
+function inferChartType(datasets: ChartDataset[]): SupportedChatChartType {
+	if (datasets.some((dataset) => hasPointData(dataset.data))) {
+		return 'scatter'
+	}
+	return 'bar'
+}
+
+function hasPointData(data: Array<number | string | ChartPoint>): boolean {
+	return data.some((value) => isChartPoint(value))
+}
+
+function isChartPoint(value: number | string | ChartPoint): value is ChartPoint {
+	return typeof value === 'object' && value !== null && 'x' in value && 'y' in value
 }
 
 function inferAxisType(values: Array<number | string>): 'linear' | 'category' {
@@ -831,24 +1040,25 @@ function buildEdaSummary(inputRows: DataRow[]): EdaSummary {
 				textColumns.add(column)
 			}
 		}
-
+		
 		missingByColumn.push({ name: column, value: columnMissing })
 	}
 
 	const numericColumns = columns.filter((column) => (numericByColumn.get(column)?.length ?? 0) > 0)
 	const numericStats = numericColumns.slice(0, 8).map((column) => {
+		console.log(`Calculating stats for column: ${column}`)
 		const values = numericByColumn.get(column) ?? []
-		const mean = values.reduce((sum, value) => sum + value, 0) / values.length
-		const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length
+		const summary = summarizeNumericValues(values)
 		return {
 			name: column,
 			count: values.length,
-			min: Math.min(...values),
-			max: Math.max(...values),
-			mean,
-			std: Math.sqrt(variance),
+			min: summary.min,
+			max: summary.max,
+			mean: summary.mean,
+			std: summary.std,
 		}
 	})
+	console.log('Numeric stats:', numericStats)
 
 	const histogram = buildHistogram(numericColumns, numericByColumn)
 	const heatmap = buildHeatmap(numericColumns, inputRows)
@@ -881,8 +1091,7 @@ function buildHistogram(
 		return null
 	}
 
-	const min = Math.min(...values)
-	const max = Math.max(...values)
+	const { min, max } = summarizeNumericValues(values)
 	if (min === max) {
 		return {
 			columnName,
@@ -912,6 +1121,40 @@ function buildHistogram(
 		values: counts,
 	}
 }
+
+	function summarizeNumericValues(values: number[]): { min: number; max: number; mean: number; std: number } {
+		if (values.length === 0) {
+			return { min: 0, max: 0, mean: 0, std: 0 }
+		}
+
+		let min = values[0]
+		let max = values[0]
+		let mean = 0
+		let m2 = 0
+
+		for (let index = 0; index < values.length; index += 1) {
+			const value = values[index]
+			if (value < min) {
+				min = value
+			}
+			if (value > max) {
+				max = value
+			}
+
+			const delta = value - mean
+			mean += delta / (index + 1)
+			const delta2 = value - mean
+			m2 += delta * delta2
+		}
+
+		const variance = m2 / values.length
+		return {
+			min,
+			max,
+			mean,
+			std: Math.sqrt(variance),
+		}
+	}
 
 function buildHeatmap(numericColumns: string[], rows: DataRow[]): HeatmapData | null {
 	const selectedColumns = numericColumns.slice(0, 6)

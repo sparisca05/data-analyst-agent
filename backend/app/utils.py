@@ -101,8 +101,19 @@ def load_dataset(path: str):
     histograms = []
 
     for col in numeric.columns[:5]:
+        values = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype=float, copy=False)
+        finite_values = values[np.isfinite(values)]
 
-        counts, bins = np.histogram(df[col], bins=10)
+        if finite_values.size == 0:
+            histograms.append({
+                "type": "histogram",
+                "column": col,
+                "labels": [],
+                "data": []
+            })
+            continue
+
+        counts, bins = np.histogram(finite_values, bins=10)
 
         histograms.append({
             "type": "histogram",
@@ -112,14 +123,5 @@ def load_dataset(path: str):
         })
 
     results["histograms"] = histograms
-
-    # Store the dataset info in the global DATASETS list
-    dataset_info = {
-        "rows": results["rows"],
-        "columns": results["columns"],
-        "summary": results["summary"],
-        "missing_values": results["missing_values"],
-        "top_correlations": results["top_correlations"],
-    }
 
     return _json_safe(results)
