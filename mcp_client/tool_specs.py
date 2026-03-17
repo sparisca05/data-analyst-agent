@@ -4,7 +4,11 @@ tools = [
         "type": "function",
         "function": {
             "name": "describe_dataset",
-            "description": "Return dataset structure and descriptive statistics of every column, including number of rows, columns, summary statistics for numeric and categorical variables, missing values, and top correlations.",
+            "description": """Return basic structural information about the dataset.
+                This includes metadata only, not analytical insights.
+                Use this tool when you need to understand the dataset's structure, columns, types, size, or general overview.
+                Do NOT use this tool for patterns, relationships, or insights.
+            """,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -19,29 +23,53 @@ tools = [
         "type": "function",
         "function": {
             "name": "query_dataset",
-            "description": "Perform tabular queries over the dataset including filtering, grouping, aggregations, sorting and limiting results.",
+            "description": """Query the dataset using filtering, grouping and aggregations. Do not use SQL expressions.
+                Examples:
+
+                User: average BMI by Gender
+                Tool call:
+                groupby: [\"Gender\"]
+                aggregations: {\"BMI\": \"mean\"}
+
+                User: total revenue by region
+                Tool call:
+                groupby: [\"region\"]
+                aggregations: {\"revenue\": \"sum\"}
+
+                User: number of customers by country
+                Tool call:
+                groupby: [\"country\"]
+                aggregations: {\"customer_id\": \"count\"}
+
+                Important: This tool does not use SQL syntax.
+                Aggregations must be specified using the 'aggregations' parameter.
+            """,
             "parameters": {
                 "type": "object",
                 "properties": {
                     "url": {"type": "string"},
                     "select": {
                         "type": "array",
-                        "items": {"type": "string"}
+                        "items": {"type": "string"},
+                        "description": "List of columns to include in the result. Only column names are allowed. Do not use SQL expressions like AVG() or SUM()."
                     },
                     "filters": {
                         "type": "object",
-                        "additionalProperties": {"type": "string"}
+                        "additionalProperties": {"type": "string"},
+                        "description": "Filter rows by column value. Example: {\"country\": \"USA\"}"
                     },
                     "groupby": {
                         "type": "array",
-                        "items": {"type": "string"}
+                        "items": {"type": "string"},
+                        "description": "Columns used to group the data before applying aggregations. Example: [\"Gender\"]."
                     },
                     "aggregations": {
                         "type": "object",
                         "additionalProperties": {
                             "type": "string",
-                            "enum": ["mean","sum","max","min","count"]
-                        }
+                            "enum": ["mean","sum","max","min","count"],
+                        },
+                        "description": "Aggregation to apply to numeric columns. Format: {\"column_name\": \"aggregation_function\"}. Example: {\"BMI\": \"mean\"}. When the user asks for averages, totals, counts, etc., this parameter must be used together with groupby."
                     },
                     "sort_by": {"type": "string"},
                     "sort_order": {
@@ -133,7 +161,11 @@ tools = [
         "type": "function",
             "function": {
             "name": "generate_insights",
-            "description": "Automatically analyze the dataset and return important statistical insights such as strong correlations, dominant categories, skewed distributions, and missing values.",
+            "description": """Analyze the dataset and return important insights, patterns, and statistical findings.
+                This includes correlations, dominant categories, skewed distributions, missing values, and other meaningful patterns.
+                Use this tool when the user asks for insights, patterns, trends, or important findings in the data.
+                Do NOT use this tool for simple dataset description.
+            """,
             "parameters": {
                 "type": "object",
                 "properties": {

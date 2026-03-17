@@ -7,21 +7,33 @@ def list_tools():
     return r.json()
 
 def call_tool(tool, arguments):
-    r = requests.post(
-        f"{MCP_URL}/call",
-        json={
-            "tool": tool,
-            "arguments": arguments
-        },
-        timeout=30
-    )
-    
+    try:
+        r = requests.post(
+            f"{MCP_URL}/call",
+            json={
+                "tool": tool,
+                "arguments": arguments
+            },
+            timeout=30
+        )
+    except requests.RequestException as e:
+        return {"error": f"MCP request failed: {str(e)}"}
+
     ct = r.headers.get("content-type", "")
     if "application/json" not in ct.lower():
-        raise RuntimeError(f"Unexpected content-type {ct}: {r.text[:500]}")
+        return {
+            "error": f"MCP returned non-JSON response (status={r.status_code}, content-type={ct}): {r.text[:500]}"
+        }
 
-    data = r.json()
+    try:
+        data = r.json()
+    except ValueError:
+        return {"error": f"MCP returned invalid JSON: {r.text[:500]}"}
+
+    if "error" in data:
+        return {"error": data["error"]}
+
     if "result" not in data:
-        raise RuntimeError(f"Missing result in response: {data}")
-    
+        return {"error": f"Missing result in MCP response: {data}"}
+
     return data["result"]

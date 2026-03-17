@@ -29,7 +29,6 @@ def query_dataset(
     Perform tabular queries over the dataset including filtering,
     grouping, aggregations, sorting and limiting results.
     """
-
     df = get_dataset(url)
 
     if df is None:
@@ -56,6 +55,13 @@ def query_dataset(
     # groupby + aggregation
     if groupby and aggregations:
         result = result.groupby(groupby).agg(aggregations).reset_index()
+    elif groupby and not aggregations:
+        result = result.groupby(groupby).agg().reset_index() # default to mean aggregation if groupby is used without specifying aggregations
+    elif aggregations and not groupby:
+        if select:
+            result = result[select].agg(aggregations).to_frame().T
+        else:
+            result = result.agg(aggregations).to_frame().T
 
     # select columns
     if select:

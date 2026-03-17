@@ -1,11 +1,15 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 :root {
-  font-family: Inter, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: Manrope, "Segoe UI", sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #181818;
-  background: radial-gradient(circle at top right, #e8f0ff, #f4f7fb 48%, #eef2f9);
+  color: #0f172a;
+  background:
+    radial-gradient(circle at 10% 14%, rgba(16, 185, 129, 0.12), transparent 34%),
+    radial-gradient(circle at 86% 22%, rgba(249, 115, 22, 0.14), transparent 38%),
+    linear-gradient(180deg, #f8fafc, #eef4fb 58%, #eff7f6);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;

@@ -16,6 +16,7 @@ SYSTEM_PROMPT = """
     Rules:
         - Always rely on tools to retrieve information from the dataset.
         - Do NOT invent columns, values, or statistics.
+        - If you haven't accesed the dataset yet, start by getting an overview of its structure and contents.
 
     When answering:
         - Give short, concise answers.
@@ -44,7 +45,7 @@ def run_agent(user_input, conversation_id = "default", file_url = None):
 
     history.append({"role": "user", "content": user_input})
 
-    for n in range (8):
+    for n in range (4):
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -69,25 +70,24 @@ def run_agent(user_input, conversation_id = "default", file_url = None):
 
         tool_called = True
 
+        messages.append({
+            "role": "assistant",
+            "content": message.content or "",
+            "tool_calls": message.tool_calls
+        })
+
+        chart_result = None
+
         for tool_call in message.tool_calls:
 
             tool_name = tool_call.function.name
             args = json.loads(tool_call.function.arguments)
             args["url"] = file_url
 
-            messages.append({
-                "role": "assistant",
-                "content": message.content or "",
-                "tool_calls": message.tool_calls
-            })
-
             result = call_tool(tool_name, args)
 
             if tool_name == "generate_chart": # special handling for charts to return data in a structured way
-                return {
-                    "type": "chart",
-                    "data": result
-                }
+                chart_result = result
 
             messages.append({
                 "role": "tool",
@@ -95,4 +95,13 @@ def run_agent(user_input, conversation_id = "default", file_url = None):
                 "content": json.dumps(result),
             })
 
+        if chart_result is not None:
+            return {
+                "type": "chart",
+                "data": chart_result
+            }
+    return {
+        "type": "text",
+        "content": "Sorry, I couldn't retrieve the information after several attempts."
+    }
 clear_conversations()
