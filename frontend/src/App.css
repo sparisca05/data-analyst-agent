@@ -181,6 +181,15 @@
   border: 1px solid #bae6fd;
 }
 
+.chat-message.chart {
+  background: #e0f2fe;
+  color: #075985;
+  justify-self: start;
+  border: 1px solid #7dd3fc;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.85rem;
+}
+
 .chat-message.user {
   background: #fff7ed;
   color: #7c2d12;

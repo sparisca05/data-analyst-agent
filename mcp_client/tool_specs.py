@@ -87,7 +87,10 @@ tools = [
         "type": "function",
         "function": {
             "name": "generate_chart",
-            "description": "Generate chart-ready data for a given chart type and its parameters.",
+            "description": """Create a visual chart from dataset columns.
+                MUST be used whenever the user asks to visualize, plot, graph, chart, or see distributions or relationships between variables.
+                Do NOT use for textual summaries or dataset descriptions.
+            """,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -96,15 +99,25 @@ tools = [
                         "type": "string",
                         "enum": ["bar", "scatter", "histogram"]
                     },
-                    "x": {"type": "string"},
-                    "y": {"type": "string"},
+                    "x": {
+                        "type": "string",
+                        "description": "Column name for x-axis. For scatter plots, this is the first variable."
+                    },
+                    "y": {
+                        "type": "string",
+                        "description": "Column name for y-axis. For scatter plots, this is the second variable."
+                    },
                     "aggregation": {
                         "type": "string",
-                        "enum": ["mean","sum","max","min","count"]
+                        "enum": ["mean","sum","max","min","count"],
+                        "description": "Aggregation function when grouping is applied. Required if groupby is present."
                     },
-                    "bins": {"type": "integer"}
+                    "bins": {
+                        "type": "integer",
+                        "description": "Number of bins (ONLY for histograms)."
+                    }
                 },
-                "required": ["url", "chart_type", "x", "bins"]
+                "required": ["url", "chart_type", "x"]
             }
         }
     },

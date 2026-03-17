@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Chart from 'chart.js/auto'
+import type { ChartType } from 'chart.js'
 import * as XLSX from 'xlsx'
 
 type CellValue = string | number | null
@@ -34,8 +35,27 @@ type EdaSummary = {
 
 type ChatMessage = {
 	id: number
-	role: 'user' | 'assistant'
+	role: 'user' | 'assistant' | 'chart'
 	text: string
+	datasets?: ChartDataset[]
+	labels?: string[]
+	type?: ChartType
+}
+
+type ChartPoint = {
+	x: number | string
+	y: number | string
+}
+
+type ChartDataset = {
+	label?: string
+	data: Array<number | string | ChartPoint>
+	backgroundColor?: string | string[]
+	borderColor?: string | string[]
+	borderWidth?: number
+	pointRadius?: number
+	showLine?: boolean
+	[key: string]: unknown
 }
 
 const SUPPORTED_EXTENSIONS = ['.csv', '.xlsx', '.xls']
@@ -56,11 +76,13 @@ function Dashboard() {
 	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
 	const [thinking, setThinking] = useState(false)
 	const [conversationId, setConversationId] = useState<string>(() => createConversationId())
+	const previousChatCountRef = useRef(0)
 
 	const histogramCanvasRef = useRef<HTMLCanvasElement | null>(null)
 	const missingCanvasRef = useRef<HTMLCanvasElement | null>(null)
 	const histogramChartRef = useRef<Chart | null>(null)
 	const missingChartRef = useRef<Chart | null>(null)
+	const chatFeedRef = useRef<HTMLDivElement | null>(null)
 
 	const apiBaseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
@@ -177,6 +199,25 @@ function Dashboard() {
 		}
 	}, [eda])
 
+	useEffect(() => {
+		const previousCount = previousChatCountRef.current
+		const currentCount = chatMessages.length
+		const lastMessage = currentCount > 0 ? chatMessages[currentCount - 1] : null
+
+		if (currentCount > previousCount && lastMessage?.role === 'chart' && chatFeedRef.current) {
+			requestAnimationFrame(() => {
+				if (chatFeedRef.current) {
+					chatFeedRef.current.scrollTo({
+						top: chatFeedRef.current.scrollHeight,
+						behavior: 'smooth',
+					})
+				}
+			})
+		}
+
+		previousChatCountRef.current = currentCount
+	}, [chatMessages])
+
 	const handleDatasetUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
 		const file = event.target.files?.[0]
 		if (!file) {
@@ -278,8 +319,22 @@ function Dashboard() {
 					throw new Error('Failed to get response from AI backend.')
 				}
 
-				const payload = (await response.json()) as { response?: { content?: string } }
-
+				const payload = (await response.json())
+				if (payload?.response.type === 'chart' && payload?.response.content) {
+					setChatMessages((previous) => [
+						...previous,
+						{ id: Date.now() + 1, role: 'assistant', text: `Here is the chart based on your question:` },
+						{ 
+							id: Date.now() + 2,
+							role: 'chart',
+							text: payload.response.content.title,
+							datasets: payload.response.content.data.datasets,
+							labels: payload.response.content.data.labels,
+							type: payload.response.content.type
+						},
+					])
+					return
+				}
 				const assistantText =
 					typeof payload.response?.content === 'string' && payload.response.content.trim()
 						? payload.response.content
@@ -342,16 +397,26 @@ function Dashboard() {
 							Questions are enabled after a dataset is loaded. Ask about trends, anomalies, missing data, or correlations.
 						</p>
 
-						<div className="chat-feed" role="log" aria-live="polite">
+						<div className="chat-feed" role="log" aria-live="polite" ref={chatFeedRef}>
 							{chatMessages.length === 0 ? (
 								<p className="chat-placeholder">Upload your data file to start the analysis conversation.</p>
 							) : (
 								chatMessages.map((message) => (
 									<article
 										key={message.id}
-										className={`chat-message ${message.role === 'assistant' ? 'assistant' : 'user'}`}
+										className={`chat-message ${message.role}`}
 									>
-										{message.text}
+										{message.role === 'chart' ? (
+											<>
+												<p className="chart-title">{message.text}</p>
+												{message.datasets && message.datasets.length > 0 && (
+													<div className="chart-preview">
+														<ChatChart message={message} />
+													</div>
+												)}
+											</>
+										) : message.text
+										}
 									</article>
 								))
 							)}
@@ -500,6 +565,150 @@ function CorrelationHeatmap({ heatmap }: { heatmap: HeatmapData }) {
 			</table>
 		</div>
 	)
+}
+
+function ChatChart({ message }: { message: ChatMessage }) {
+	const canvasRef = useRef<HTMLCanvasElement | null>(null)
+	const chartRef = useRef<Chart<ChartType, unknown[], unknown> | null>(null)
+
+	useEffect(() => {
+		if (!canvasRef.current || !message.datasets || message.datasets.length === 0) {
+			return
+		}
+
+		if (chartRef.current) {
+			chartRef.current.destroy()
+		}
+
+		const chartType = message.type || inferChartType(message.datasets)
+		const { scales, labels } = buildChartAxes(message.datasets, message.labels, chartType)
+		const normalizedDatasets = message.datasets.map((dataset) => {
+			if (chartType === 'bar') {
+				return {
+					...dataset,
+					borderRadius: 6,
+				}
+			}
+
+			if (chartType === 'scatter') {
+				return {
+					...dataset,
+					showLine: dataset.showLine ?? false,
+					pointRadius: dataset.pointRadius ?? 4,
+				}
+			}
+
+			return dataset
+		})
+
+		chartRef.current = new Chart(canvasRef.current, {
+			type: chartType,
+			data: {
+				labels,
+				datasets: normalizedDatasets,
+			},
+			options: {
+				responsive: true,
+				maintainAspectRatio: false,
+				plugins: { legend: { display: normalizedDatasets.length > 1 } },
+				scales,
+				animation: {
+					duration: 500,
+					easing: 'easeOutQuart',
+				},
+			},
+		})
+
+		return () => {
+			if (chartRef.current) {
+				chartRef.current.destroy()
+				chartRef.current = null
+			}
+		}
+	}, [message.datasets, message.labels, message.type])
+
+	return <canvas ref={canvasRef} aria-label={message.text} />
+}
+
+function inferChartType(datasets: ChartDataset[]): ChartType {
+	if (datasets.some((dataset) => hasPointData(dataset.data))) {
+		return 'scatter'
+	}
+	return 'bar'
+}
+
+function hasPointData(data: Array<number | string | ChartPoint>): boolean {
+	return data.some((value) => isChartPoint(value))
+}
+
+function isChartPoint(value: number | string | ChartPoint): value is ChartPoint {
+	return typeof value === 'object' && value !== null && 'x' in value && 'y' in value
+}
+
+function buildChartAxes(
+	datasets: ChartDataset[],
+	messageLabels: string[] | undefined,
+	chartType: ChartType,
+): { labels?: string[]; scales: object } {
+	if (chartType === 'scatter') {
+		const points = datasets
+			.flatMap((dataset) => dataset.data)
+			.filter((value): value is ChartPoint => isChartPoint(value))
+
+		const xValues = points.map((point) => point.x)
+		const yValues = points.map((point) => point.y)
+		const xType = inferAxisType(xValues)
+		const yType = inferAxisType(yValues)
+
+		return {
+			scales: {
+				x: {
+					type: xType,
+					ticks: {
+						autoSkip: true,
+						maxRotation: 0,
+						minRotation: 0,
+						maxTicksLimit: 8,
+					},
+				},
+				y: {
+					type: yType,
+					ticks: {
+						autoSkip: true,
+						maxRotation: 0,
+						minRotation: 0,
+						maxTicksLimit: 8,
+					},
+				},
+			},
+		}
+	}
+
+	return {
+		labels: messageLabels,
+		scales: {
+			x: {
+				ticks: {
+					autoSkip: true,
+					maxRotation: 0,
+					minRotation: 0,
+					maxTicksLimit: 7,
+				},
+			},
+			y: {
+				beginAtZero: true,
+				ticks: { precision: 0 },
+			},
+		},
+	}
+}
+
+function inferAxisType(values: Array<number | string>): 'linear' | 'category' {
+	const numericValues = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+	if (numericValues.length === values.length && values.length > 0) {
+		return 'linear'
+	}
+	return 'category'
 }
 
 function getHeatColor(value: number, maxAbs: number): string {

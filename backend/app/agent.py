@@ -33,7 +33,6 @@ def clear_conversations():
 
 def run_agent(user_input, conversation_id = "default", file_url = None):
     TOOLS = list_tools()
-    tool_called = False
 
     history = CONVERSATIONS.get(conversation_id, [])
 
@@ -57,18 +56,14 @@ def run_agent(user_input, conversation_id = "default", file_url = None):
         message = response.choices[0].message
 
         if not message.tool_calls:
-            if not tool_called:
-                messages.append({
-                    "role": "assistant",
-                    "content": message.content
-                })
-                continue
+            messages.append({
+                "role": "assistant",
+                "content": message.content
+            })
             return {
                 "type": "text",
                 "content": message.content
             }
-
-        tool_called = True
 
         messages.append({
             "role": "assistant",
@@ -98,7 +93,7 @@ def run_agent(user_input, conversation_id = "default", file_url = None):
         if chart_result is not None:
             return {
                 "type": "chart",
-                "data": chart_result
+                "content": chart_result
             }
     return {
         "type": "text",
