@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from app.agent import clear_conversations, run_agent
 from app.utils import load_dataset, set_file_url, get_file_url
 
-from config import SUPABASE_URL, SUPABASE_KEY
+from config import SUPABASE_URL, SUPABASE_KEY, FRONT_URL
 
 app = FastAPI()
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -18,7 +18,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Enable CORS to allow frontend requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", FRONT_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
