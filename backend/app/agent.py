@@ -38,6 +38,7 @@ def run_agent(user_input, conversation_id = "default", file_url = None):
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": f"The dataset is available at this URL: https://dataset-example.csv"},
         *history,
         {"role": "user", "content": user_input},
     ]
@@ -50,7 +51,7 @@ def run_agent(user_input, conversation_id = "default", file_url = None):
             model="gpt-4o-mini",
             messages=messages,
             tools=TOOLS,
-            max_completion_tokens=200,
+            max_completion_tokens=400,
         )
 
         message = response.choices[0].message

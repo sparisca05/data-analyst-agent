@@ -29,7 +29,7 @@ type EdaSummary = {
 	completeness: number
 	numericStats: NumericStats[]
 	missingByColumn: { name: string; value: number }[]
-	histogram: { labels: string[]; values: number[]; columnName: string } | null
+	histograms: { labels: string[]; values: number[]; columnName: string }[] | null
 	heatmap: HeatmapData | null
 }
 
@@ -61,9 +61,57 @@ type ChartDataset = {
 }
 
 const SUPPORTED_EXTENSIONS = ['.csv', '.xlsx', '.xls']
+const SUGGESTED_PROMPTS = [
+	'Give me a brief description of this dataset',
+	'Which are the insights of the dataset I need to know?',
+	'Show me the average [column] by [column]',
+	'Detect outliers for the feature [column]',
+	'Create a graph that shows the distribution of [column]',
+	'Which features correlate with [column]',
+]
 
 function createConversationId(): string {
 	return `conv-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function pickRandomPrompts(prompts: string[], count: number, exclude?: string): string[] {
+	const basePool = exclude ? prompts.filter((prompt) => prompt !== exclude) : [...prompts]
+	const pool = [...basePool]
+
+	for (let index = pool.length - 1; index > 0; index -= 1) {
+		const swapIndex = Math.floor(Math.random() * (index + 1))
+		const current = pool[index]
+		pool[index] = pool[swapIndex]
+		pool[swapIndex] = current
+	}
+
+	return pool.slice(0, Math.min(count, pool.length))
+}
+
+function buildColumnTooltip(columns: string[]): string {
+	if (columns.length === 0) {
+		return 'Load a dataset to see real column examples.'
+	}
+
+	const sample = columns.slice(0, 6).join(', ')
+	if (columns.length > 6) {
+		return `Examples: ${sample}, ...`
+	}
+
+	return `Examples: ${sample}`
+}
+
+function replaceColumnPlaceholders(prompt: string, columns: string[]): string {
+	if (!prompt.includes('[column]') || columns.length === 0) {
+		return prompt
+	}
+
+	let replacementIndex = 0
+	return prompt.replaceAll('[column]', () => {
+		const value = columns[Math.min(replacementIndex, columns.length - 1)]
+		replacementIndex += 1
+		return value
+	})
 }
 
 function Dashboard() {
@@ -74,9 +122,13 @@ function Dashboard() {
 	const [uploadError, setUploadError] = useState('')
 	const [rows, setRows] = useState<DataRow[]>([])
 	const [eda, setEda] = useState<EdaSummary | null>(null)
+	const [selectedHistogramColumn, setSelectedHistogramColumn] = useState('')
 	const [chatInput, setChatInput] = useState('')
 	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
 	const [thinking, setThinking] = useState(false)
+	const [visibleSuggestedPrompts, setVisibleSuggestedPrompts] = useState<string[]>(() =>
+		pickRandomPrompts(SUGGESTED_PROMPTS, 3),
+	)
 	const [conversationId, setConversationId] = useState<string>(() => createConversationId())
 	const previousChatCountRef = useRef(0)
 
@@ -85,14 +137,39 @@ function Dashboard() {
 	const histogramChartRef = useRef<Chart | null>(null)
 	const missingChartRef = useRef<Chart | null>(null)
 	const chatFeedRef = useRef<HTMLDivElement | null>(null)
+	const chatInputRef = useRef<HTMLTextAreaElement | null>(null)
 
 	const apiBaseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 	const previewRows = useMemo(() => rows.slice(0, 6), [rows])
+	const detectedColumns = useMemo(() => (rows[0] ? Object.keys(rows[0]) : []), [rows])
+	const columnPromptTooltip = useMemo(() => buildColumnTooltip(detectedColumns), [detectedColumns])
 	const previewColumns = useMemo(() => (previewRows[0] ? Object.keys(previewRows[0]) : []), [previewRows])
+	const selectedHistogram = useMemo(() => {
+		if (!eda?.histograms || eda.histograms.length === 0) {
+			return null
+		}
+
+		return (
+			eda.histograms.find((histogram) => histogram.columnName === selectedHistogramColumn) ??
+			eda.histograms[0]
+		)
+	}, [eda, selectedHistogramColumn])
 
 	useEffect(() => {
-		if (!eda?.histogram || !histogramCanvasRef.current) {
+		if (!eda?.histograms || eda.histograms.length === 0) {
+			setSelectedHistogramColumn('')
+			return
+		}
+
+		const exists = eda.histograms.some((histogram) => histogram.columnName === selectedHistogramColumn)
+		if (!exists) {
+			setSelectedHistogramColumn(eda.histograms[0].columnName)
+		}
+	}, [eda, selectedHistogramColumn])
+
+	useEffect(() => {
+		if (!selectedHistogram || !histogramCanvasRef.current) {
 			if (histogramChartRef.current) {
 				histogramChartRef.current.destroy()
 				histogramChartRef.current = null
@@ -107,11 +184,11 @@ function Dashboard() {
 		histogramChartRef.current = new Chart(histogramCanvasRef.current, {
 			type: 'bar',
 			data: {
-				labels: eda.histogram.labels,
+				labels: selectedHistogram.labels,
 				datasets: [
 					{
-						label: `Distribution for ${eda.histogram.columnName}`,
-						data: eda.histogram.values,
+						label: `Distribution for ${selectedHistogram.columnName}`,
+						data: selectedHistogram.values,
 						borderRadius: 6,
 						backgroundColor: '#f97316',
 					},
@@ -144,7 +221,7 @@ function Dashboard() {
 				histogramChartRef.current = null
 			}
 		}
-	}, [eda])
+	}, [selectedHistogram])
 
 	useEffect(() => {
 		if (!eda || !missingCanvasRef.current) {
@@ -283,6 +360,7 @@ function Dashboard() {
 				setDatasetName('')
 				setRows([])
 				setEda(null)
+				setSelectedHistogramColumn('')
 				setDatasetLoaded(false)
 				setChatMessages([])
 				setConversationId(createConversationId())
@@ -294,12 +372,12 @@ function Dashboard() {
 		}
 	}
 
-	const handleAsk = () => {
-		if (!datasetLoaded || !agentReady || !eda || !chatInput.trim() || thinking) {
+	const handleAsk = (presetQuestion?: string) => {
+		const question = (presetQuestion ?? chatInput).trim()
+		if (!datasetLoaded || !agentReady || !eda || !question || thinking) {
 			return
 		}
 
-		const question = chatInput.trim()
 		setChatInput('')
 		setThinking(true)
 
@@ -323,6 +401,9 @@ function Dashboard() {
 				}
 
 				const payload = (await response.json())
+				if (payload?.response?.content.error) {
+					throw new Error(`AI backend error: ${payload.response.content.error}`)
+				}
 				if (payload?.response.type === 'chart' && payload?.response.content) {
 					setChatMessages((previous) => [
 						...previous,
@@ -356,8 +437,22 @@ function Dashboard() {
 				])
 			} finally {
 				setThinking(false)
+			setVisibleSuggestedPrompts(pickRandomPrompts(SUGGESTED_PROMPTS, 3, question))
 			}
 		})()
+	}
+
+	const handleSuggestedPromptClick = (prompt: string) => {
+		if (!datasetLoaded || !agentReady || thinking) {
+			return
+		}
+
+		const draft = replaceColumnPlaceholders(prompt, detectedColumns)
+		setChatInput(draft)
+
+		requestAnimationFrame(() => {
+			chatInputRef.current?.focus()
+		})
 	}
 
 	return (
@@ -400,6 +495,28 @@ function Dashboard() {
 							Questions are enabled after a dataset is loaded. Ask about trends, anomalies, missing data, or correlations.
 						</p>
 
+						<div className="suggested-prompts" aria-label="Suggested prompts">
+							<p>Suggested prompts</p>
+							<div className="suggested-prompts-grid">
+								{visibleSuggestedPrompts.map((prompt, index) => {
+									const hasColumnPlaceholder = prompt.includes('[column]')
+
+									return (
+										<button
+											type="button"
+											key={`${prompt}-${index}`}
+											className={`suggested-prompt-chip${hasColumnPlaceholder ? ' has-tooltip' : ''}`}
+											data-tooltip={hasColumnPlaceholder ? columnPromptTooltip : undefined}
+											onClick={() => handleSuggestedPromptClick(prompt)}
+											disabled={!datasetLoaded || !agentReady || thinking}
+										>
+											{prompt}
+										</button>
+									)
+								})}
+							</div>
+						</div>
+
 						<div className="chat-feed" role="log" aria-live="polite" ref={chatFeedRef}>
 							{chatMessages.length === 0 ? (
 								<p className="chat-placeholder">Upload your data file to start the analysis conversation.</p>
@@ -428,6 +545,7 @@ function Dashboard() {
 
 						<div className="chat-controls">
 							<textarea
+								ref={chatInputRef}
 								value={chatInput}
 								onChange={(event) => setChatInput(event.target.value)}
 								placeholder="Example: Which variables have the most missing values?"
@@ -436,7 +554,7 @@ function Dashboard() {
 							/>
 							<button
 								type="button"
-								onClick={handleAsk}
+								onClick={() => handleAsk()}
 								disabled={!datasetLoaded || !agentReady || !chatInput.trim() || thinking}
 							>
 								Send question
@@ -469,8 +587,24 @@ function Dashboard() {
 
 									<div className="chart-wrapper">
 										<h3>Distribution snapshot</h3>
+										{eda.histograms && eda.histograms.length > 1 && (
+											<div className="histogram-selector">
+												<label htmlFor="histogram-column-select">Column</label>
+												<select
+													id="histogram-column-select"
+													value={selectedHistogramColumn}
+													onChange={(event) => setSelectedHistogramColumn(event.target.value)}
+												>
+													{eda.histograms.map((histogram) => (
+														<option key={histogram.columnName} value={histogram.columnName}>
+															{histogram.columnName}
+														</option>
+													))}
+												</select>
+											</div>
+										)}
 										<div className="chart-canvas-wrap">
-											{eda.histogram ? (
+											{eda.histograms && eda.histograms.length > 0 ? (
 												<canvas ref={histogramCanvasRef} aria-label="Histogram chart" />
 											) : (
 												<p className="no-chart">No numeric columns available for distribution chart.</p>
@@ -1060,7 +1194,8 @@ function buildEdaSummary(inputRows: DataRow[]): EdaSummary {
 	})
 	console.log('Numeric stats:', numericStats)
 
-	const histogram = buildHistogram(numericColumns, numericByColumn)
+	const histograms = buildHistogram(numericColumns, numericByColumn)
+
 	const heatmap = buildHeatmap(numericColumns, inputRows)
 
 	return {
@@ -1072,7 +1207,7 @@ function buildEdaSummary(inputRows: DataRow[]): EdaSummary {
 		completeness: totalCells > 0 ? ((totalCells - missingCells) / totalCells) * 100 : 0,
 		numericStats,
 		missingByColumn,
-		histogram,
+		histograms: histograms ?? null,
 		heatmap,
 	}
 }
@@ -1080,46 +1215,48 @@ function buildEdaSummary(inputRows: DataRow[]): EdaSummary {
 function buildHistogram(
 	numericColumns: string[],
 	numericByColumn: Map<string, number[]>,
-): { labels: string[]; values: number[]; columnName: string } | null {
+): { labels: string[]; values: number[]; columnName: string }[] | null {
 	if (numericColumns.length === 0) {
 		return null
 	}
 
-	const columnName = numericColumns[0]
-	const values = numericByColumn.get(columnName) ?? []
-	if (values.length === 0) {
-		return null
-	}
+	const histograms = []
 
-	const { min, max } = summarizeNumericValues(values)
-	if (min === max) {
-		return {
-			columnName,
-			labels: [`${min.toFixed(2)}`],
-			values: [values.length],
+	for (const columnName of numericColumns) {
+		const values = numericByColumn.get(columnName) ?? []
+		if (values.length === 0) {
+			return null
 		}
+
+		const { min, max } = summarizeNumericValues(values)
+		if (min === max) {
+			histograms.push({
+				columnName,
+				labels: [`${min.toFixed(2)}`],
+				values: [values.length],
+			})
+			continue
+		}
+
+		const bins = 8
+		const width = (max - min) / bins
+		const counts = new Array<number>(bins).fill(0)
+
+		for (const value of values) {
+			const index = Math.min(Math.floor((value - min) / width), bins - 1)
+			counts[index] += 1
+		}
+
+		const labels = counts.map((_, index) => {
+			const start = min + index * width
+			const end = start + width
+			return `${start.toFixed(1)} - ${end.toFixed(1)}`
+		})
+
+		histograms.push({ columnName, labels, values: counts })
 	}
 
-	const bins = 8
-	const width = (max - min) / bins
-	const counts = new Array<number>(bins).fill(0)
-
-	for (const value of values) {
-		const index = Math.min(Math.floor((value - min) / width), bins - 1)
-		counts[index] += 1
-	}
-
-	const labels = counts.map((_, index) => {
-		const start = min + index * width
-		const end = start + width
-		return `${start.toFixed(1)} - ${end.toFixed(1)}`
-	})
-
-	return {
-		columnName,
-		labels,
-		values: counts,
-	}
+	return histograms
 }
 
 	function summarizeNumericValues(values: number[]): { min: number; max: number; mean: number; std: number } {

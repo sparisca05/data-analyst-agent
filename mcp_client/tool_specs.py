@@ -7,6 +7,7 @@ tools = [
             "description": """Return basic structural information about the dataset.
                 This includes metadata only, not analytical insights.
                 Use this tool when you need to understand the dataset's structure, columns, types, size, or general overview.
+                If the user asks for dataset summary, description, or structure, use this tool and respond with a concise overview telling about the dataset, not column listing.
                 Do NOT use this tool for patterns, relationships, or insights.
             """,
             "parameters": {
@@ -97,14 +98,15 @@ tools = [
                     "url": {"type": "string"},
                     "chart_type": {
                         "type": "string",
-                        "enum": ["bar", "scatter", "histogram", "line", "doughnut"],
+                        "enum": ["bar", "scatter", "histogram", "line", "doughnut", "pie"],
                         "description": """Type of chart to generate.
                             If the user doesn't specify a chart type:
                             Use 'bar' for categorical comparisons,
                             'scatter' for relationships between two numeric variables,
                             'histogram' for distributions of a single numeric variable,
                             'line' for trends over an ordered variable (like time),
-                            and 'doughnut' for proportions of a categorical variable.
+                            'doughnut' for proportions of a categorical variable,
+                            and 'pie' for similar purposes.
                         """
                     },
                     "x": {
@@ -119,10 +121,6 @@ tools = [
                         "type": "string",
                         "enum": ["mean","sum","max","min","count"],
                         "description": "Aggregation function when grouping is applied. Required if groupby is present."
-                    },
-                    "bins": {
-                        "type": "integer",
-                        "description": "Number of bins (ONLY for histograms)."
                     }
                 },
                 "required": ["url", "chart_type", "x"]

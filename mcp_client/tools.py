@@ -125,8 +125,7 @@ def generate_chart(
     chart_type: str,
     x: str,
     y: str | None = None,
-    aggregation: str | None = None,
-    bins: int = 10
+    aggregation: str | None = None
 ):
     """
     Generate chart-ready data from the dataset.
@@ -144,6 +143,23 @@ def generate_chart(
     if chart_type == "histogram":
 
         values = df[x].dropna()
+
+        if values.empty:
+            return {"error": f"Column {x} has no non-null values"}
+
+        # Choose bin count from data distribution (Freedman-Diaconis, then Sturges fallback).
+        q1, q3 = np.percentile(values, [25, 75])
+        iqr = q3 - q1
+        n = len(values)
+
+        if iqr > 0:
+            bin_width = 2 * iqr * (n ** (-1 / 3))
+            data_range = values.max() - values.min()
+            bins = int(np.ceil(data_range / bin_width)) if bin_width > 0 else int(np.ceil(np.log2(n) + 1))
+        else:
+            bins = int(np.ceil(np.log2(n) + 1))
+
+        bins = max(5, min(60, bins))
 
         counts, edges = np.histogram(values, bins=bins)
 
@@ -222,6 +238,42 @@ def generate_chart(
                             for _, row in sample.iterrows()
                         ]
                     }
+                ]
+            }
+        }
+    
+    if chart_type == "line":
+
+        if not y or y not in df.columns:
+            return {"error": "Line chart requires x and y columns"}
+
+        sample = df[[x, y]].dropna().sort_values(x).head(500)
+
+        return {
+            "type": "line",
+            "title": f"{y} over {x}",
+            "data": {
+                "labels": sample[x].astype(str).tolist(),
+                "datasets": [
+                    {
+                        "label": f"{y} over {x}",
+                        "data": sample[y].tolist()
+                    }
+                ]
+            }
+        }
+    
+    if chart_type == "doughnut" or chart_type == "pie":
+
+        counts = df[x].value_counts()
+
+        return {
+            "type": "doughnut",
+            "title": f"Proportion of {x}",
+            "data": {
+                "labels": counts.index.astype(str).tolist(),
+                "datasets": [
+                    {"label": x, "data": counts.values.tolist()}
                 ]
             }
         }
