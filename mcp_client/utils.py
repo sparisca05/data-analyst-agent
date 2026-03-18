@@ -1,10 +1,8 @@
 import pandas as pd
-import numpy as np
 
 DATASET_CACHE = {}
 
 def get_dataset(url):
-   
     if url not in DATASET_CACHE:
         df = pd.read_csv(url)
         DATASET_CACHE[url] = df
