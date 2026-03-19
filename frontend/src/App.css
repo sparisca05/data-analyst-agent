@@ -79,6 +79,20 @@
   box-shadow: 0 10px 16px -12px rgba(194, 65, 12, 0.9);
 }
 
+.upload-button.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.upload-button.disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.upload-button.disabled input {
+  cursor: not-allowed;
+}
+
 .upload-button input {
   position: absolute;
   inset: 0;
@@ -93,6 +107,75 @@
   border: 1px solid #fecaca;
   border-radius: 10px;
   padding: 0.7rem 0.85rem;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  border-radius: 12px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1e3a8a;
+  padding: 0.65rem 0.8rem;
+}
+
+.connection-status.loading {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.connection-status.ready {
+  border-color: #99f6e4;
+  background: #f0fdfa;
+  color: #0f766e;
+}
+
+.connection-status.error {
+  border-color: #fecaca;
+  background: #fff2f2;
+  color: #991b1b;
+}
+
+.connection-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: currentColor;
+}
+
+.connection-status.loading .connection-dot {
+  animation: pulse-dot 1s ease-in-out infinite;
+}
+
+.connection-copy {
+  display: flex;
+  font-size: 0.92rem;
+  gap: 0.5rem;
+}
+
+.connection-copy p {
+  margin: 0;
+  opacity: 0.95;
+}
+
+.connection-retry {
+  margin-left: auto;
+  border: 1px solid currentColor;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+}
+
+.connection-retry:hover {
+  background: rgba(255, 255, 255, 0.5);
 }
 
 .dataset-status {
@@ -514,6 +597,18 @@ th {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes pulse-dot {
+  0% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.45;
   }
 }
 

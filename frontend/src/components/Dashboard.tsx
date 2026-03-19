@@ -70,6 +70,10 @@ const SUGGESTED_PROMPTS = [
 	'Which features correlate with [column]',
 ]
 
+const CONNECTION_RETRY_MS = 2500
+const CONNECTION_TIMEOUT_MS = 12000
+const MAX_CONNECTION_WAIT_MS = 120000
+
 function createConversationId(): string {
 	return `conv-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
@@ -114,6 +118,29 @@ function replaceColumnPlaceholders(prompt: string, columns: string[]): string {
 	})
 }
 
+function sleep(milliseconds: number): Promise<void> {
+	return new Promise((resolve) => {
+		window.setTimeout(resolve, milliseconds)
+	})
+}
+
+async function pingService(url: string, timeoutMs = CONNECTION_TIMEOUT_MS): Promise<boolean> {
+	const controller = new AbortController()
+	const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
+
+	try {
+		const response = await fetch(url, {
+			method: 'GET',
+			signal: controller.signal,
+		})
+		return response.ok
+	} catch {
+		return false
+	} finally {
+		window.clearTimeout(timeoutId)
+	}
+}
+
 function Dashboard() {
 	const [datasetName, setDatasetName] = useState('')
 	const [datasetLoaded, setDatasetLoaded] = useState(false)
@@ -126,6 +153,11 @@ function Dashboard() {
 	const [chatInput, setChatInput] = useState('')
 	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
 	const [thinking, setThinking] = useState(false)
+	const [serversChecking, setServersChecking] = useState(true)
+	const [serversReady, setServersReady] = useState(false)
+	const [serversError, setServersError] = useState('')
+	const [serversStatusText, setServersStatusText] = useState('Checking backend and tool server...')
+	const [connectionAttempt, setConnectionAttempt] = useState(0)
 	const [visibleSuggestedPrompts, setVisibleSuggestedPrompts] = useState<string[]>(() =>
 		pickRandomPrompts(SUGGESTED_PROMPTS, 3),
 	)
@@ -140,6 +172,7 @@ function Dashboard() {
 	const chatInputRef = useRef<HTMLTextAreaElement | null>(null)
 
 	const apiBaseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+	const mcpBaseUrl = import.meta.env.VITE_MCP_URL ?? 'http://localhost:8001'
 
 	const previewRows = useMemo(() => rows.slice(0, 6), [rows])
 	const detectedColumns = useMemo(() => (rows[0] ? Object.keys(rows[0]) : []), [rows])
@@ -155,6 +188,63 @@ function Dashboard() {
 			eda.histograms[0]
 		)
 	}, [eda, selectedHistogramColumn])
+
+	useEffect(() => {
+		let cancelled = false
+
+		const checkConnections = async () => {
+			setServersChecking(true)
+			setServersReady(false)
+			setServersError('')
+			setServersStatusText('Checking backend and tool server...')
+
+			const startedAt = Date.now()
+
+			while (!cancelled) {
+				const [backendOnline, mcpOnline] = await Promise.all([
+					pingService(`${apiBaseUrl}/`),
+					pingService(`${mcpBaseUrl}/`),
+				])
+
+				if (cancelled) {
+					return
+				}
+
+				if (backendOnline && mcpOnline) {
+					setServersReady(true)
+					setServersChecking(false)
+					setServersStatusText('Backend and tool server are ready.')
+					return
+				}
+
+				const missing: string[] = []
+				if (!backendOnline) {
+					missing.push('backend')
+				}
+				if (!mcpOnline) {
+					missing.push('tool server')
+				}
+
+				setServersStatusText(`Waking up ${missing.join(' and ')}...`)
+
+				if (Date.now() - startedAt >= MAX_CONNECTION_WAIT_MS) {
+					setServersChecking(false)
+					setServersReady(false)
+					setServersError('Services did not respond in time. Please retry connection.')
+					setServersStatusText('Connection timed out.')
+					return
+				}
+
+				await sleep(CONNECTION_RETRY_MS)
+			}
+		}
+
+		void checkConnections()
+
+		return () => {
+			cancelled = true
+		}
+	}, [apiBaseUrl, mcpBaseUrl, connectionAttempt])
 
 	useEffect(() => {
 		if (!eda?.histograms || eda.histograms.length === 0) {
@@ -298,6 +388,12 @@ function Dashboard() {
 	}, [chatMessages])
 
 	const handleDatasetUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+		if (!serversReady || serversChecking) {
+			setUploadError('Services are still warming up. Please wait a moment and try again.')
+			event.target.value = ''
+			return
+		}
+
 		const file = event.target.files?.[0]
 		if (!file) {
 			return
@@ -374,7 +470,7 @@ function Dashboard() {
 
 	const handleAsk = (presetQuestion?: string) => {
 		const question = (presetQuestion ?? chatInput).trim()
-		if (!datasetLoaded || !agentReady || !eda || !question || thinking) {
+		if (!serversReady || serversChecking || !datasetLoaded || !agentReady || !eda || !question || thinking) {
 			return
 		}
 
@@ -443,7 +539,7 @@ function Dashboard() {
 	}
 
 	const handleSuggestedPromptClick = (prompt: string) => {
-		if (!datasetLoaded || !agentReady || thinking) {
+		if (!serversReady || serversChecking || !datasetLoaded || !agentReady || thinking) {
 			return
 		}
 
@@ -453,6 +549,10 @@ function Dashboard() {
 		requestAnimationFrame(() => {
 			chatInputRef.current?.focus()
 		})
+	}
+
+	const handleRetryConnections = () => {
+		setConnectionAttempt((attempt) => attempt + 1)
 	}
 
 	return (
@@ -466,17 +566,47 @@ function Dashboard() {
 							Upload a file and instantly explore profile metrics, quality checks, distributions, and correlation heatmaps.
 						</p>
 					</div>
-					<label className="upload-button" htmlFor="dataset-upload">
+					<label
+						className={`upload-button${uploading || serversChecking || !serversReady ? ' disabled' : ''}`}
+						htmlFor="dataset-upload"
+					>
 						<input
 							id="dataset-upload"
 							type="file"
 							accept=".csv,.xlsx,.xls"
 							onChange={handleDatasetUpload}
-							disabled={uploading}
+							disabled={uploading || serversChecking || !serversReady}
 						/>
-						{uploading ? 'Loading dataset...' : 'Upload dataset'}
+						{serversChecking
+							? 'Waking up services...'
+							: uploading
+								? 'Loading dataset...'
+								: 'Upload dataset'}
 					</label>
 				</header>
+
+				<section
+					className={`dataset-status${serversReady ? ' ready' : serversError ? ' error' : ' loading'}`}
+					role="status"
+					aria-live="polite"
+				>
+					<span className="connection-dot" aria-hidden="true" />
+					<div className="connection-copy">
+						<p>
+							{serversReady
+								? 'Services ready:'
+								: serversError
+									? 'Connection issue detected:'
+									: 'Warming up services'}
+						</p>
+						<strong>{serversError || serversStatusText}</strong>
+					</div>
+					{serversError && (
+						<button type="button" className="connection-retry" onClick={handleRetryConnections}>
+							Retry connection
+						</button>
+					)}
+				</section>
 
 				{uploadError && <p className="upload-error">{uploadError}</p>}
 
@@ -508,7 +638,7 @@ function Dashboard() {
 											className={`suggested-prompt-chip${hasColumnPlaceholder ? ' has-tooltip' : ''}`}
 											data-tooltip={hasColumnPlaceholder ? columnPromptTooltip : undefined}
 											onClick={() => handleSuggestedPromptClick(prompt)}
-											disabled={!datasetLoaded || !agentReady || thinking}
+											disabled={!serversReady || serversChecking || !datasetLoaded || !agentReady || thinking}
 										>
 											{prompt}
 										</button>
@@ -518,7 +648,9 @@ function Dashboard() {
 						</div>
 
 						<div className="chat-feed" role="log" aria-live="polite" ref={chatFeedRef}>
-							{chatMessages.length === 0 ? (
+							{!serversReady ? (
+								<p className="chat-placeholder">Waiting for backend services to become available...</p>
+							) : chatMessages.length === 0 ? (
 								<p className="chat-placeholder">Upload your data file to start the analysis conversation.</p>
 							) : (
 								chatMessages.map((message) => (
@@ -549,13 +681,13 @@ function Dashboard() {
 								value={chatInput}
 								onChange={(event) => setChatInput(event.target.value)}
 								placeholder="Example: Which variables have the most missing values?"
-								disabled={!datasetLoaded || !agentReady || thinking}
+								disabled={!serversReady || serversChecking || !datasetLoaded || !agentReady || thinking}
 								style={{ resize: 'none' }}
 							/>
 							<button
 								type="button"
 								onClick={() => handleAsk()}
-								disabled={!datasetLoaded || !agentReady || !chatInput.trim() || thinking}
+								disabled={!serversReady || serversChecking || !datasetLoaded || !agentReady || !chatInput.trim() || thinking}
 							>
 								Send question
 							</button>
