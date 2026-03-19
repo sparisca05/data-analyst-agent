@@ -1,0 +1,661 @@
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import Chart from 'chart.js/auto'
+import { CONNECTION_RETRY_MS, MAX_CONNECTION_WAIT_MS, SUGGESTED_PROMPTS, SUPPORTED_EXTENSIONS } from './utils/constants'
+import {
+	buildColumnTooltip,
+	createConversationId,
+	pickRandomPrompts,
+	pingService,
+	replaceColumnPlaceholders,
+	sleep,
+} from './utils/connectionUtils'
+import { buildEdaSummary, formatCell, generateAssistantResponse, getFileExtension, parseDatasetFile } from './utils/dataUtils'
+import ChatChart from './components/ChatChart'
+import CorrelationHeatmap from './components/CorrelationHeatmap'
+import MetricCard from './components/MetricCard'
+import type { ChatMessage, DataRow, EdaSummary } from './utils/types'
+
+function Dashboard() {
+	const [datasetName, setDatasetName] = useState('')
+	const [datasetLoaded, setDatasetLoaded] = useState(false)
+	const [agentReady, setAgentReady] = useState(false)
+	const [uploading, setUploading] = useState(false)
+	const [uploadError, setUploadError] = useState('')
+	const [rows, setRows] = useState<DataRow[]>([])
+	const [eda, setEda] = useState<EdaSummary | null>(null)
+	const [selectedHistogramColumn, setSelectedHistogramColumn] = useState('')
+	const [chatInput, setChatInput] = useState('')
+	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+	const [thinking, setThinking] = useState(false)
+	const [serversChecking, setServersChecking] = useState(true)
+	const [serversReady, setServersReady] = useState(false)
+	const [serversError, setServersError] = useState('')
+	const [serversStatusText, setServersStatusText] = useState('Checking backend and tool server...')
+	const [connectionAttempt, setConnectionAttempt] = useState(0)
+	const [visibleSuggestedPrompts, setVisibleSuggestedPrompts] = useState<string[]>(() =>
+		pickRandomPrompts(SUGGESTED_PROMPTS, 3),
+	)
+	const [conversationId, setConversationId] = useState<string>(() => createConversationId())
+	const previousChatCountRef = useRef(0)
+
+	const histogramCanvasRef = useRef<HTMLCanvasElement | null>(null)
+	const missingCanvasRef = useRef<HTMLCanvasElement | null>(null)
+	const histogramChartRef = useRef<Chart | null>(null)
+	const missingChartRef = useRef<Chart | null>(null)
+	const chatFeedRef = useRef<HTMLDivElement | null>(null)
+	const chatInputRef = useRef<HTMLTextAreaElement | null>(null)
+
+	const apiBaseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+	const mcpBaseUrl = import.meta.env.VITE_MCP_URL ?? 'http://localhost:8001'
+
+	const previewRows = useMemo(() => rows.slice(0, 6), [rows])
+	const detectedColumns = useMemo(() => (rows[0] ? Object.keys(rows[0]) : []), [rows])
+	const columnPromptTooltip = useMemo(() => buildColumnTooltip(detectedColumns), [detectedColumns])
+	const previewColumns = useMemo(() => (previewRows[0] ? Object.keys(previewRows[0]) : []), [previewRows])
+	const selectedHistogram = useMemo(() => {
+		if (!eda?.histograms || eda.histograms.length === 0) {
+			return null
+		}
+
+		return (
+			eda.histograms.find((histogram) => histogram.columnName === selectedHistogramColumn) ??
+			eda.histograms[0]
+		)
+	}, [eda, selectedHistogramColumn])
+
+	useEffect(() => {
+		let cancelled = false
+
+		const checkConnections = async () => {
+			setServersChecking(true)
+			setServersReady(false)
+			setServersError('')
+			setServersStatusText('Checking backend and tool server...')
+
+			const startedAt = Date.now()
+
+			while (!cancelled) {
+				const [backendOnline, mcpOnline] = await Promise.all([
+					pingService(`${apiBaseUrl}/`),
+					pingService(`${mcpBaseUrl}/`),
+				])
+
+				if (cancelled) {
+					return
+				}
+
+				if (backendOnline && mcpOnline) {
+					setServersReady(true)
+					setServersChecking(false)
+					setServersStatusText('Backend and tool server are ready.')
+					return
+				}
+
+				const missing: string[] = []
+				if (!backendOnline) {
+					missing.push('backend')
+				}
+				if (!mcpOnline) {
+					missing.push('tool server')
+				}
+
+				setServersStatusText(`Waking up ${missing.join(' and ')}...`)
+
+				if (Date.now() - startedAt >= MAX_CONNECTION_WAIT_MS) {
+					setServersChecking(false)
+					setServersReady(false)
+					setServersError('Services did not respond in time. Please retry connection.')
+					setServersStatusText('Connection timed out.')
+					return
+				}
+
+				await sleep(CONNECTION_RETRY_MS)
+			}
+		}
+
+		void checkConnections()
+
+		return () => {
+			cancelled = true
+		}
+	}, [apiBaseUrl, mcpBaseUrl, connectionAttempt])
+
+	useEffect(() => {
+		if (!eda?.histograms || eda.histograms.length === 0) {
+			setSelectedHistogramColumn('')
+			return
+		}
+
+		const exists = eda.histograms.some((histogram) => histogram.columnName === selectedHistogramColumn)
+		if (!exists) {
+			setSelectedHistogramColumn(eda.histograms[0].columnName)
+		}
+	}, [eda, selectedHistogramColumn])
+
+	useEffect(() => {
+		if (!selectedHistogram || !histogramCanvasRef.current) {
+			if (histogramChartRef.current) {
+				histogramChartRef.current.destroy()
+				histogramChartRef.current = null
+			}
+			return
+		}
+
+		if (histogramChartRef.current) {
+			histogramChartRef.current.destroy()
+		}
+
+		histogramChartRef.current = new Chart(histogramCanvasRef.current, {
+			type: 'bar',
+			data: {
+				labels: selectedHistogram.labels,
+				datasets: [
+					{
+						label: `Distribution for ${selectedHistogram.columnName}`,
+						data: selectedHistogram.values,
+						borderRadius: 6,
+						backgroundColor: '#f97316',
+					},
+				],
+			},
+			options: {
+				responsive: true,
+				maintainAspectRatio: false,
+				plugins: { legend: { display: false } },
+				scales: {
+					x: {
+						ticks: {
+							autoSkip: true,
+							maxRotation: 0,
+							minRotation: 0,
+							maxTicksLimit: 6,
+						},
+					},
+					y: {
+						beginAtZero: true,
+						ticks: { precision: 0 },
+					},
+				},
+			},
+		})
+
+		return () => {
+			if (histogramChartRef.current) {
+				histogramChartRef.current.destroy()
+				histogramChartRef.current = null
+			}
+		}
+	}, [selectedHistogram])
+
+	useEffect(() => {
+		if (!eda || !missingCanvasRef.current) {
+			if (missingChartRef.current) {
+				missingChartRef.current.destroy()
+				missingChartRef.current = null
+			}
+			return
+		}
+
+		if (missingChartRef.current) {
+			missingChartRef.current.destroy()
+		}
+
+		missingChartRef.current = new Chart(missingCanvasRef.current, {
+			type: 'bar',
+			data: {
+				labels: eda.missingByColumn.map((item) => item.name),
+				datasets: [
+					{
+						label: 'Missing Values',
+						data: eda.missingByColumn.map((item) => item.value),
+						borderRadius: 6,
+						backgroundColor: '#0f766e',
+					},
+				],
+			},
+			options: {
+				responsive: true,
+				maintainAspectRatio: false,
+				plugins: { legend: { display: false } },
+				scales: {
+					x: {
+						ticks: {
+							autoSkip: true,
+							maxRotation: 0,
+							minRotation: 0,
+							maxTicksLimit: 7,
+						},
+					},
+					y: {
+						beginAtZero: true,
+						ticks: { precision: 0 },
+					},
+				},
+			},
+		})
+
+		return () => {
+			if (missingChartRef.current) {
+				missingChartRef.current.destroy()
+				missingChartRef.current = null
+			}
+		}
+	}, [eda])
+
+	useEffect(() => {
+		const previousCount = previousChatCountRef.current
+		const currentCount = chatMessages.length
+		const lastMessage = currentCount > 0 ? chatMessages[currentCount - 1] : null
+
+		if (currentCount > previousCount && lastMessage?.role === 'chart' && chatFeedRef.current) {
+			requestAnimationFrame(() => {
+				if (chatFeedRef.current) {
+					chatFeedRef.current.scrollTo({
+						top: chatFeedRef.current.scrollHeight,
+						behavior: 'smooth',
+					})
+				}
+			})
+		}
+
+		previousChatCountRef.current = currentCount
+	}, [chatMessages])
+
+	const handleDatasetUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+		if (!serversReady || serversChecking) {
+			setUploadError('Services are still warming up. Please wait a moment and try again.')
+			event.target.value = ''
+			return
+		}
+
+		const file = event.target.files?.[0]
+		if (!file) {
+			return
+		}
+
+		let parsedLocally = false
+		const nextConversationId = createConversationId()
+
+		setUploadError('')
+		setUploading(true)
+		setAgentReady(false)
+		setConversationId(nextConversationId)
+
+		try {
+			const extension = getFileExtension(file.name)
+			if (!SUPPORTED_EXTENSIONS.includes(extension)) {
+				throw new Error('Unsupported format. Please upload .csv, .xlsx, or .xls files.')
+			}
+
+			const parsedRows = await parseDatasetFile(file)
+			if (parsedRows.length === 0) {
+				throw new Error('The dataset is empty or could not be parsed.')
+			}
+
+			const edaSummary = buildEdaSummary(parsedRows)
+			setRows(parsedRows)
+			setEda(edaSummary)
+			setDatasetName(file.name)
+			setDatasetLoaded(true)
+			parsedLocally = true
+
+			const formData = new FormData()
+			formData.append('file', file)
+			const uploadResponse = await fetch(
+				`${apiBaseUrl}/upload?conversation_id=${encodeURIComponent(nextConversationId)}`,
+				{
+					method: 'POST',
+					body: formData,
+				},
+			)
+
+			if (!uploadResponse.ok) {
+				throw new Error('Dataset parsed locally, but the agent backend rejected the upload.')
+			}
+
+			setAgentReady(true)
+			setChatMessages([
+				{
+					id: Date.now(),
+					role: 'assistant',
+					text: `Dataset loaded successfully. I detected ${edaSummary.rows} rows, ${edaSummary.columns} columns, and ${edaSummary.numericColumns} numeric columns. Ask me anything about this data.`,
+				},
+			])
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'Unable to read the selected file.'
+			setUploadError(message)
+			if (!parsedLocally) {
+				setDatasetName('')
+				setRows([])
+				setEda(null)
+				setSelectedHistogramColumn('')
+				setDatasetLoaded(false)
+				setChatMessages([])
+				setConversationId(createConversationId())
+			}
+			setAgentReady(false)
+		} finally {
+			setUploading(false)
+			event.target.value = ''
+		}
+	}
+
+	const handleAsk = (presetQuestion?: string) => {
+		const question = (presetQuestion ?? chatInput).trim()
+		if (!serversReady || serversChecking || !datasetLoaded || !agentReady || !eda || !question || thinking) {
+			return
+		}
+
+		setChatInput('')
+		setThinking(true)
+
+		setChatMessages((previous) => [...previous, { id: Date.now(), role: 'user', text: question }])
+
+		void (async () => {
+			try {
+				const response = await fetch(`${apiBaseUrl}/chat`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({ query: question, conversation_id: conversationId }),
+				})
+
+				if (!response.ok) {
+					throw new Error('Failed to get response from AI backend.')
+				}
+
+				const payload = await response.json()
+				if (payload?.response?.content.error) {
+					throw new Error(`AI backend error: ${payload.response.content.error}`)
+				}
+				if (payload?.response.type === 'chart' && payload?.response.content) {
+					setChatMessages((previous) => [
+						...previous,
+						{ id: Date.now() + 1, role: 'assistant', text: 'Here is the chart based on your question:' },
+						{
+							id: Date.now() + 2,
+							role: 'chart',
+							text: payload.response.content.title,
+							datasets: payload.response.content.data.datasets,
+							labels: payload.response.content.data.labels,
+							type: payload.response.content.type,
+						},
+					])
+					return
+				}
+
+				const assistantText =
+					typeof payload.response?.content === 'string' && payload.response.content.trim()
+						? payload.response.content
+						: generateAssistantResponse(question, eda)
+
+				setChatMessages((previous) => [
+					...previous,
+					{ id: Date.now() + 1, role: 'assistant', text: assistantText },
+				])
+			} catch (error) {
+				console.error('Error occurred while fetching AI response:', error)
+				const fallback = generateAssistantResponse(question, eda)
+				setChatMessages((previous) => [
+					...previous,
+					{ id: Date.now() + 1, role: 'assistant', text: `${fallback} (Backend unavailable, using local insight mode.)` },
+				])
+			} finally {
+				setThinking(false)
+				setVisibleSuggestedPrompts(pickRandomPrompts(SUGGESTED_PROMPTS, 3, question))
+			}
+		})()
+	}
+
+	const handleSuggestedPromptClick = (prompt: string) => {
+		if (!serversReady || serversChecking || !datasetLoaded || !agentReady || thinking) {
+			return
+		}
+
+		const draft = replaceColumnPlaceholders(prompt, detectedColumns)
+		setChatInput(draft)
+
+		requestAnimationFrame(() => {
+			chatInputRef.current?.focus()
+		})
+	}
+
+	const handleRetryConnections = () => {
+		setConnectionAttempt((attempt) => attempt + 1)
+	}
+
+	return (
+		<main className="dashboard-main">
+			<div className="dashboard-shell">
+				<header className="dashboard-header">
+					<div>
+						<p className="badge">AI Data Analyst</p>
+						<h1>Interactive dataset intelligence workspace</h1>
+						<p className="header-subtitle">
+							Upload a file and instantly explore profile metrics, quality checks, distributions, and correlation heatmaps.
+						</p>
+					</div>
+					<label
+						className={`upload-button${uploading || serversChecking || !serversReady ? ' disabled' : ''}`}
+						htmlFor="dataset-upload"
+					>
+						<input
+							id="dataset-upload"
+							type="file"
+							accept=".csv,.xlsx,.xls"
+							onChange={handleDatasetUpload}
+							disabled={uploading || serversChecking || !serversReady}
+						/>
+						{serversChecking
+							? 'Waking up services...'
+							: uploading
+								? 'Loading dataset...'
+								: 'Upload dataset'}
+					</label>
+				</header>
+
+				<section
+					className={`dataset-status${serversReady ? ' ready' : serversError ? ' error' : ' loading'}`}
+					role="status"
+					aria-live="polite"
+				>
+					<span className="connection-dot" aria-hidden="true" />
+					<div className="connection-copy">
+						<p>
+							{serversReady
+								? 'Services ready:'
+								: serversError
+									? 'Connection issue detected:'
+									: 'Warming up services'}
+						</p>
+						<strong>{serversError || serversStatusText}</strong>
+					</div>
+					{serversError && (
+						<button type="button" className="connection-retry" onClick={handleRetryConnections}>
+							Retry connection
+						</button>
+					)}
+				</section>
+
+				{uploadError && <p className="upload-error">{uploadError}</p>}
+
+				{datasetLoaded && datasetName && (
+					<section className="dataset-status">
+						<span className="status-dot" />
+						<span>{agentReady ? 'Dataset and agent ready:' : 'Dataset parsed locally:'}</span>
+						<strong>{datasetName}</strong>
+					</section>
+				)}
+
+				<div className="dashboard-grid">
+					<section className="card chat-card">
+						<h2>Ask the AI analyst</h2>
+						<p className="card-subtitle">
+							Questions are enabled after a dataset is loaded. Ask about trends, anomalies, missing data, or correlations.
+						</p>
+
+						<div className="suggested-prompts" aria-label="Suggested prompts">
+							<p>Suggested prompts</p>
+							<div className="suggested-prompts-grid">
+								{visibleSuggestedPrompts.map((prompt, index) => {
+									const hasColumnPlaceholder = prompt.includes('[column]')
+
+									return (
+										<button
+											type="button"
+											key={`${prompt}-${index}`}
+											className={`suggested-prompt-chip${hasColumnPlaceholder ? ' has-tooltip' : ''}`}
+											data-tooltip={hasColumnPlaceholder ? columnPromptTooltip : undefined}
+											onClick={() => handleSuggestedPromptClick(prompt)}
+											disabled={!serversReady || serversChecking || !datasetLoaded || !agentReady || thinking}
+										>
+											{prompt}
+										</button>
+									)
+								})}
+							</div>
+						</div>
+
+						<div className="chat-feed" role="log" aria-live="polite" ref={chatFeedRef}>
+							{!serversReady ? (
+								<p className="chat-placeholder">Waiting for backend services to become available...</p>
+							) : chatMessages.length === 0 ? (
+								<p className="chat-placeholder">Upload your data file to start the analysis conversation.</p>
+							) : (
+								chatMessages.map((message) => (
+									<article key={message.id} className={`chat-message ${message.role}`}>
+										{message.role === 'chart' ? (
+											<>
+												<p className="chart-title">{message.text}</p>
+												{message.datasets && message.datasets.length > 0 && (
+													<div className="chart-preview">
+														<ChatChart message={message} />
+													</div>
+												)}
+											</>
+										) : (
+											message.text
+										)}
+									</article>
+								))
+							)}
+							{thinking && <p className="chat-thinking">Analyzing your question...</p>}
+						</div>
+
+						<div className="chat-controls">
+							<textarea
+								ref={chatInputRef}
+								value={chatInput}
+								onChange={(event) => setChatInput(event.target.value)}
+								placeholder="Example: Which variables have the most missing values?"
+								disabled={!serversReady || serversChecking || !datasetLoaded || !agentReady || thinking}
+								style={{ resize: 'none' }}
+							/>
+							<button
+								type="button"
+								onClick={() => handleAsk()}
+								disabled={!serversReady || serversChecking || !datasetLoaded || !agentReady || !chatInput.trim() || thinking}
+							>
+								Send question
+							</button>
+						</div>
+					</section>
+
+					<section className="card eda-card">
+						<h2>Exploratory Data Analysis</h2>
+						<p className="card-subtitle">The EDA panel appears immediately after file upload.</p>
+
+						{eda ? (
+							<div className="eda-content">
+								<div className="metrics-grid">
+									<MetricCard label="Rows" value={eda.rows.toLocaleString()} />
+									<MetricCard label="Columns" value={eda.columns.toLocaleString()} />
+									<MetricCard label="Missing cells" value={eda.missingCells.toLocaleString()} />
+									<MetricCard label="Completeness" value={`${eda.completeness.toFixed(1)}%`} />
+									<MetricCard label="Numeric columns" value={eda.numericColumns.toLocaleString()} />
+									<MetricCard label="Text columns" value={eda.textColumns.toLocaleString()} />
+								</div>
+
+								<div className="charts-grid">
+									<div className="chart-wrapper">
+										<h3>Missing values by column</h3>
+										<div className="chart-canvas-wrap">
+											<canvas ref={missingCanvasRef} aria-label="Missing values chart" />
+										</div>
+									</div>
+
+									<div className="chart-wrapper">
+										<h3>Distribution snapshot</h3>
+										{eda.histograms && eda.histograms.length > 1 && (
+											<div className="histogram-selector">
+												<label htmlFor="histogram-column-select">Column</label>
+												<select
+													id="histogram-column-select"
+													value={selectedHistogramColumn}
+													onChange={(event) => setSelectedHistogramColumn(event.target.value)}
+												>
+													{eda.histograms.map((histogram) => (
+														<option key={histogram.columnName} value={histogram.columnName}>
+															{histogram.columnName}
+														</option>
+													))}
+												</select>
+											</div>
+										)}
+										<div className="chart-canvas-wrap">
+											{eda.histograms && eda.histograms.length > 0 ? (
+												<canvas ref={histogramCanvasRef} aria-label="Histogram chart" />
+											) : (
+												<p className="no-chart">No numeric columns available for distribution chart.</p>
+											)}
+										</div>
+									</div>
+								</div>
+
+								<div className="heatmap-wrapper">
+									<h3>Correlation heatmap</h3>
+									{eda.heatmap ? (
+										<CorrelationHeatmap heatmap={eda.heatmap} />
+									) : (
+										<p className="no-chart">At least two numeric columns are required to build a heatmap.</p>
+									)}
+								</div>
+
+								<div className="preview-wrapper">
+									<h3>Preview sample</h3>
+									<div className="table-wrap">
+										<table>
+											<thead>
+												<tr>
+													{previewColumns.map((column) => (
+														<th key={column}>{column}</th>
+													))}
+												</tr>
+											</thead>
+											<tbody>
+												{previewRows.map((row, rowIndex) => (
+													<tr key={`preview-${rowIndex}`}>
+														{previewColumns.map((column) => (
+															<td key={`${column}-${rowIndex}`}>{formatCell(row[column])}</td>
+														))}
+													</tr>
+												))}
+											</tbody>
+										</table>
+									</div>
+								</div>
+							</div>
+						) : (
+							<p className="eda-empty">
+								Upload a dataset file to instantly generate EDA metrics, charts, and a correlation heatmap.
+							</p>
+						)}
+					</section>
+				</div>
+			</div>
+		</main>
+	)
+}
+
+export default Dashboard
