@@ -1,5 +1,32 @@
 import * as XLSX from 'xlsx'
-import type { CellValue, DataRow, EdaSummary, HeatmapData } from './types'
+import type { CellValue, DataRow, EdaSummary, HeatmapData, HistogramChart, CategoricalPieChart, NumericStats } from './types'
+
+type BackendDatasetSummary = {
+	rows?: unknown
+	columns?: unknown
+	summary?: {
+		numeric?: Record<string, Record<string, unknown>>
+		categorical?: Record<string, Record<string, unknown>>
+	}
+	missing_values?: {
+		total?: unknown
+		by_column?: Record<string, unknown>
+	}
+	correlation_chart?: {
+		labels?: unknown
+		data?: unknown
+	}
+	histograms?: Array<{
+		column?: unknown
+		labels?: unknown
+		data?: unknown
+	}>
+	categorical_pie_charts?: Array<{
+		column?: unknown
+		labels?: unknown
+		data?: unknown
+	}>
+}
 
 export function formatCell(value: CellValue): string {
 	if (value === null) {
@@ -132,6 +159,7 @@ export function buildEdaSummary(inputRows: DataRow[]): EdaSummary {
 	})
 
 	const histograms = buildHistogram(numericColumns, numericByColumn)
+	const categoricalPieCharts = buildCategoricalPieCharts(columns, inputRows, numericColumns)
 	const heatmap = buildHeatmap(numericColumns, inputRows)
 
 	return {
@@ -144,14 +172,54 @@ export function buildEdaSummary(inputRows: DataRow[]): EdaSummary {
 		numericStats,
 		missingByColumn,
 		histograms: histograms ?? null,
+		categoricalPieCharts,
 		heatmap,
+	}
+}
+
+export function buildEdaSummaryFromBackend(dataset: unknown, inputRows: DataRow[]): EdaSummary | null {
+	if (!isObject(dataset)) {
+		return null
+	}
+
+	const payload = dataset as BackendDatasetSummary
+	const fallback = buildEdaSummary(inputRows)
+
+	const rows = toSafeInteger(payload.rows, fallback.rows)
+	const columnsList = Array.isArray(payload.columns)
+		? payload.columns.filter((value): value is string => typeof value === 'string')
+		: Object.keys(inputRows[0] ?? {})
+	const columns = columnsList.length > 0 ? columnsList.length : fallback.columns
+
+	const numericStats = mapNumericStats(payload.summary?.numeric)
+	const numericColumns = numericStats.length > 0 ? numericStats.length : fallback.numericColumns
+
+	const missingByColumn = mapMissingByColumn(payload.missing_values?.by_column, columnsList)
+	const missingCells = toSafeInteger(payload.missing_values?.total, fallback.missingCells)
+
+	const histograms = mapHistograms(payload.histograms)
+	const categoricalPieCharts = mapCategoricalPieCharts(payload.categorical_pie_charts)
+	const heatmap = mapHeatmap(payload.correlation_chart)
+
+	return {
+		rows,
+		columns,
+		numericColumns,
+		textColumns: Math.max(columns - numericColumns, fallback.textColumns),
+		missingCells,
+		completeness: rows * columns > 0 ? ((rows * columns - missingCells) / (rows * columns)) * 100 : 0,
+		numericStats: numericStats.length > 0 ? numericStats : fallback.numericStats,
+		missingByColumn: missingByColumn.length > 0 ? missingByColumn : fallback.missingByColumn,
+		histograms: histograms ?? fallback.histograms,
+		categoricalPieCharts: categoricalPieCharts ?? fallback.categoricalPieCharts,
+		heatmap: heatmap ?? fallback.heatmap,
 	}
 }
 
 function buildHistogram(
 	numericColumns: string[],
 	numericByColumn: Map<string, number[]>,
-): { labels: string[]; values: number[]; columnName: string }[] | null {
+): HistogramChart[] | null {
 	if (numericColumns.length === 0) {
 		return null
 	}
@@ -193,6 +261,51 @@ function buildHistogram(
 	}
 
 	return histograms
+}
+
+function buildCategoricalPieCharts(
+	columns: string[],
+	rows: DataRow[],
+	numericColumns: string[],
+): CategoricalPieChart[] | null {
+	const numericSet = new Set(numericColumns)
+	const charts: CategoricalPieChart[] = []
+
+	for (const column of columns) {
+		if (numericSet.has(column)) {
+			continue
+		}
+
+		const counts = new Map<string, number>()
+		for (const row of rows) {
+			const value = row[column]
+			if (value === null) {
+				continue
+			}
+			const label = String(value)
+			counts.set(label, (counts.get(label) ?? 0) + 1)
+		}
+
+		if (counts.size === 0 || counts.size > 20) {
+			continue
+		}
+
+		const sorted = Array.from(counts.entries()).sort((left, right) => right[1] - left[1])
+		const top = sorted.slice(0, 8)
+		const otherTotal = sorted.slice(8).reduce((sum, [, value]) => sum + value, 0)
+
+		const labels = top.map(([label]) => label)
+		const values = top.map(([, value]) => value)
+
+		if (otherTotal > 0) {
+			labels.push('Other')
+			values.push(otherTotal)
+		}
+
+		charts.push({ columnName: column, labels, values })
+	}
+
+	return charts.length > 0 ? charts.slice(0, 5) : null
 }
 
 function summarizeNumericValues(values: number[]): { min: number; max: number; mean: number; std: number } {
@@ -278,6 +391,161 @@ function correlationForColumns(rows: DataRow[], leftColumn: string, rightColumn:
 	}
 
 	return numerator / denominator
+}
+
+function mapNumericStats(summaryNumeric: Record<string, Record<string, unknown>> | undefined): NumericStats[] {
+	if (!summaryNumeric) {
+		return []
+	}
+
+	const stats: NumericStats[] = []
+
+	for (const [name, values] of Object.entries(summaryNumeric)) {
+		const count = toSafeNumber(values.count, 0)
+		const min = toSafeNumber(values.min, 0)
+		const max = toSafeNumber(values.max, 0)
+		const mean = toSafeNumber(values.mean, 0)
+		const std = toSafeNumber(values.std, 0)
+
+		stats.push({
+			name,
+			count,
+			min,
+			max,
+			mean,
+			std,
+		})
+	}
+
+	return stats
+}
+
+function mapMissingByColumn(
+	missingByColumn: Record<string, unknown> | undefined,
+	orderedColumns: string[],
+): { name: string; value: number }[] {
+	const mapped = new Map<string, number>()
+
+	if (missingByColumn) {
+		for (const [column, value] of Object.entries(missingByColumn)) {
+			mapped.set(column, toSafeInteger(value, 0))
+		}
+	}
+
+	if (orderedColumns.length === 0) {
+		return Array.from(mapped.entries()).map(([name, value]) => ({ name, value }))
+	}
+
+	return orderedColumns.map((name) => ({
+		name,
+		value: mapped.get(name) ?? 0,
+	}))
+}
+
+function mapHistograms(source: BackendDatasetSummary['histograms']): HistogramChart[] | null {
+	if (!Array.isArray(source) || source.length === 0) {
+		return null
+	}
+
+	const charts: HistogramChart[] = source
+		.map((item) => {
+			if (!item || typeof item.column !== 'string' || !Array.isArray(item.labels) || !Array.isArray(item.data)) {
+				return null
+			}
+
+			const labels = item.labels.map((label) => String(label))
+			const values = item.data.map((value) => toSafeInteger(value, 0))
+
+			if (labels.length === 0 || labels.length !== values.length) {
+				return null
+			}
+
+			return {
+				columnName: item.column,
+				labels,
+				values,
+			}
+		})
+		.filter((chart): chart is HistogramChart => chart !== null)
+
+	return charts.length > 0 ? charts : null
+}
+
+function mapCategoricalPieCharts(source: BackendDatasetSummary['categorical_pie_charts']): CategoricalPieChart[] | null {
+	if (!Array.isArray(source) || source.length === 0) {
+		return null
+	}
+
+	const charts: CategoricalPieChart[] = source
+		.map((item) => {
+			if (!item || typeof item.column !== 'string' || !Array.isArray(item.labels) || !Array.isArray(item.data)) {
+				return null
+			}
+
+			const labels = item.labels.map((label) => String(label))
+			const values = item.data.map((value) => toSafeInteger(value, 0))
+
+			if (labels.length === 0 || labels.length !== values.length) {
+				return null
+			}
+
+			return {
+				columnName: item.column,
+				labels,
+				values,
+			}
+		})
+		.filter((chart): chart is CategoricalPieChart => chart !== null)
+
+	return charts.length > 0 ? charts : null
+}
+
+function mapHeatmap(correlationChart: BackendDatasetSummary['correlation_chart']): HeatmapData | null {
+	if (!correlationChart || !Array.isArray(correlationChart.labels) || !Array.isArray(correlationChart.data)) {
+		return null
+	}
+
+	const columns = correlationChart.labels.filter((label): label is string => typeof label === 'string')
+	if (columns.length < 2) {
+		return null
+	}
+
+	const matrix = correlationChart.data
+		.map((row) => {
+			if (!Array.isArray(row)) {
+				return null
+			}
+			return row.map((value) => toSafeNumber(value, 0))
+		})
+		.filter((row): row is number[] => row !== null)
+
+	if (matrix.length !== columns.length || matrix.some((row) => row.length !== columns.length)) {
+		return null
+	}
+
+	return { columns, matrix }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null
+}
+
+function toSafeNumber(value: unknown, fallback: number): number {
+	if (typeof value === 'number' && Number.isFinite(value)) {
+		return value
+	}
+	if (typeof value === 'string') {
+		const parsed = Number(value)
+		if (Number.isFinite(parsed)) {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+function toSafeInteger(value: unknown, fallback: number): number {
+	const numeric = toSafeNumber(value, fallback)
+	return Number.isFinite(numeric) ? Math.max(0, Math.round(numeric)) : fallback
 }
 
 export function generateAssistantResponse(question: string, eda: EdaSummary): string {

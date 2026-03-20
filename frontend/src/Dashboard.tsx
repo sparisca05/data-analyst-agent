@@ -9,7 +9,7 @@ import {
 	replaceColumnPlaceholders,
 	sleep,
 } from './utils/connectionUtils'
-import { buildEdaSummary, formatCell, generateAssistantResponse, getFileExtension, parseDatasetFile } from './utils/dataUtils'
+import { buildEdaSummary, buildEdaSummaryFromBackend, formatCell, generateAssistantResponse, getFileExtension, parseDatasetFile } from './utils/dataUtils'
 import ChatChart from './components/ChatChart'
 import CorrelationHeatmap from './components/CorrelationHeatmap'
 import MetricCard from './components/MetricCard'
@@ -24,6 +24,7 @@ function Dashboard() {
 	const [rows, setRows] = useState<DataRow[]>([])
 	const [eda, setEda] = useState<EdaSummary | null>(null)
 	const [selectedHistogramColumn, setSelectedHistogramColumn] = useState('')
+	const [selectedCategoricalColumn, setSelectedCategoricalColumn] = useState('')
 	const [chatInput, setChatInput] = useState('')
 	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
 	const [thinking, setThinking] = useState(false)
@@ -39,8 +40,10 @@ function Dashboard() {
 	const previousChatCountRef = useRef(0)
 
 	const histogramCanvasRef = useRef<HTMLCanvasElement | null>(null)
+	const categoricalCanvasRef = useRef<HTMLCanvasElement | null>(null)
 	const missingCanvasRef = useRef<HTMLCanvasElement | null>(null)
 	const histogramChartRef = useRef<Chart | null>(null)
+	const categoricalChartRef = useRef<Chart | null>(null)
 	const missingChartRef = useRef<Chart | null>(null)
 	const chatFeedRef = useRef<HTMLDivElement | null>(null)
 	const chatInputRef = useRef<HTMLTextAreaElement | null>(null)
@@ -62,6 +65,17 @@ function Dashboard() {
 			eda.histograms[0]
 		)
 	}, [eda, selectedHistogramColumn])
+
+	const selectedCategoricalChart = useMemo(() => {
+		if (!eda?.categoricalPieCharts || eda.categoricalPieCharts.length === 0) {
+			return null
+		}
+
+		return (
+			eda.categoricalPieCharts.find((chart) => chart.columnName === selectedCategoricalColumn) ??
+			eda.categoricalPieCharts[0]
+		)
+	}, [eda, selectedCategoricalColumn])
 
 	useEffect(() => {
 		let cancelled = false
@@ -133,6 +147,18 @@ function Dashboard() {
 	}, [eda, selectedHistogramColumn])
 
 	useEffect(() => {
+		if (!eda?.categoricalPieCharts || eda.categoricalPieCharts.length === 0) {
+			setSelectedCategoricalColumn('')
+			return
+		}
+
+		const exists = eda.categoricalPieCharts.some((chart) => chart.columnName === selectedCategoricalColumn)
+		if (!exists) {
+			setSelectedCategoricalColumn(eda.categoricalPieCharts[0].columnName)
+		}
+	}, [eda, selectedCategoricalColumn])
+
+	useEffect(() => {
 		if (!selectedHistogram || !histogramCanvasRef.current) {
 			if (histogramChartRef.current) {
 				histogramChartRef.current.destroy()
@@ -186,6 +212,67 @@ function Dashboard() {
 			}
 		}
 	}, [selectedHistogram])
+
+	useEffect(() => {
+		if (!selectedCategoricalChart || !categoricalCanvasRef.current) {
+			if (categoricalChartRef.current) {
+				categoricalChartRef.current.destroy()
+				categoricalChartRef.current = null
+			}
+			return
+		}
+
+		if (categoricalChartRef.current) {
+			categoricalChartRef.current.destroy()
+		}
+
+		const baseColors = [
+			'#0f766e',
+			'#f97316',
+			'#1d4ed8',
+			'#dc2626',
+			'#7c3aed',
+			'#ca8a04',
+			'#0ea5e9',
+			'#14b8a6',
+			'#475569',
+		]
+
+		categoricalChartRef.current = new Chart(categoricalCanvasRef.current, {
+			type: 'pie',
+			data: {
+				labels: selectedCategoricalChart.labels,
+				datasets: [
+					{
+						label: `Categories for ${selectedCategoricalChart.columnName}`,
+						data: selectedCategoricalChart.values,
+						backgroundColor: selectedCategoricalChart.labels.map(
+							(_, index) => baseColors[index % baseColors.length],
+						),
+						borderColor: '#ffffff',
+						borderWidth: 1,
+					},
+				],
+			},
+			options: {
+				responsive: true,
+				maintainAspectRatio: false,
+				plugins: {
+					legend: {
+						display: true,
+						position: 'bottom',
+					},
+				},
+			},
+		})
+
+		return () => {
+			if (categoricalChartRef.current) {
+				categoricalChartRef.current.destroy()
+				categoricalChartRef.current = null
+			}
+		}
+	}, [selectedCategoricalChart])
 
 	useEffect(() => {
 		if (!eda || !missingCanvasRef.current) {
@@ -292,9 +379,9 @@ function Dashboard() {
 				throw new Error('The dataset is empty or could not be parsed.')
 			}
 
-			const edaSummary = buildEdaSummary(parsedRows)
+			const localEdaSummary = buildEdaSummary(parsedRows)
 			setRows(parsedRows)
-			setEda(edaSummary)
+			setEda(localEdaSummary)
 			setDatasetName(file.name)
 			setDatasetLoaded(true)
 			parsedLocally = true
@@ -313,12 +400,17 @@ function Dashboard() {
 				throw new Error('Dataset parsed locally, but the agent backend rejected the upload.')
 			}
 
+			const uploadPayload = await uploadResponse.json()
+			const backendEdaSummary = buildEdaSummaryFromBackend(uploadPayload?.dataset, parsedRows)
+			const resolvedEdaSummary = backendEdaSummary ?? localEdaSummary
+			setEda(resolvedEdaSummary)
+
 			setAgentReady(true)
 			setChatMessages([
 				{
 					id: Date.now(),
 					role: 'assistant',
-					text: `Dataset loaded successfully. I detected ${edaSummary.rows} rows, ${edaSummary.columns} columns, and ${edaSummary.numericColumns} numeric columns. Ask me anything about this data.`,
+					text: `Dataset loaded successfully. I detected ${resolvedEdaSummary.rows} rows, ${resolvedEdaSummary.columns} columns, and ${resolvedEdaSummary.numericColumns} numeric columns. Ask me anything about this data.`,
 				},
 			])
 		} catch (error) {
@@ -329,6 +421,7 @@ function Dashboard() {
 				setRows([])
 				setEda(null)
 				setSelectedHistogramColumn('')
+				setSelectedCategoricalColumn('')
 				setDatasetLoaded(false)
 				setChatMessages([])
 				setConversationId(createConversationId())
@@ -586,7 +679,7 @@ function Dashboard() {
 									</div>
 
 									<div className="chart-wrapper">
-										<h3>Distribution snapshot</h3>
+										<h3>Numeric distributions</h3>
 										{eda.histograms && eda.histograms.length > 1 && (
 											<div className="histogram-selector">
 												<label htmlFor="histogram-column-select">Column</label>
@@ -608,6 +701,33 @@ function Dashboard() {
 												<canvas ref={histogramCanvasRef} aria-label="Histogram chart" />
 											) : (
 												<p className="no-chart">No numeric columns available for distribution chart.</p>
+											)}
+										</div>
+									</div>
+
+									<div className="chart-wrapper">
+										<h3>Categorical composition</h3>
+										{eda.categoricalPieCharts && eda.categoricalPieCharts.length > 1 && (
+											<div className="histogram-selector">
+												<label htmlFor="categorical-column-select">Column</label>
+												<select
+													id="categorical-column-select"
+													value={selectedCategoricalColumn}
+													onChange={(event) => setSelectedCategoricalColumn(event.target.value)}
+												>
+													{eda.categoricalPieCharts.map((chart) => (
+														<option key={chart.columnName} value={chart.columnName}>
+															{chart.columnName}
+														</option>
+													))}
+												</select>
+											</div>
+										)}
+										<div className="chart-canvas-wrap">
+											{eda.categoricalPieCharts && eda.categoricalPieCharts.length > 0 ? (
+												<canvas ref={categoricalCanvasRef} aria-label="Categorical pie chart" />
+											) : (
+												<p className="no-chart">No categorical columns available for pie chart.</p>
 											)}
 										</div>
 									</div>

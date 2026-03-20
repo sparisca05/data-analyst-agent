@@ -17,6 +17,18 @@ export type HeatmapData = {
 	matrix: number[][]
 }
 
+export type HistogramChart = {
+	labels: string[]
+	values: number[]
+	columnName: string
+}
+
+export type CategoricalPieChart = {
+	labels: string[]
+	values: number[]
+	columnName: string
+}
+
 export type EdaSummary = {
 	rows: number
 	columns: number
@@ -26,7 +38,8 @@ export type EdaSummary = {
 	completeness: number
 	numericStats: NumericStats[]
 	missingByColumn: { name: string; value: number }[]
-	histograms: { labels: string[]; values: number[]; columnName: string }[] | null
+	histograms: HistogramChart[] | null
+	categoricalPieCharts: CategoricalPieChart[] | null
 	heatmap: HeatmapData | null
 }
 

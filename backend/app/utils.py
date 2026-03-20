@@ -1,7 +1,17 @@
 import pandas as pd
 import numpy as np
+from pathlib import Path
 
 FILE_URL_CACHE = {}
+
+
+def _read_dataframe(path: str) -> pd.DataFrame:
+    extension = Path(path).suffix.lower()
+    if extension == ".csv":
+        return pd.read_csv(path)
+    if extension in {".xlsx", ".xls"}:
+        return pd.read_excel(path)
+    raise ValueError("Unsupported file format. Please upload .csv, .xlsx, or .xls files.")
 
 def _json_safe(value):
     """Recursively convert pandas/numpy values to JSON-safe Python values."""
@@ -36,7 +46,7 @@ def get_file_url(conversation_id):
     return FILE_URL_CACHE.get(conversation_id)
 
 def load_dataset(path: str):
-    df = pd.read_csv(path)
+    df = _read_dataframe(path)
 
     numeric = df.select_dtypes(include="number")
     categorical = df.select_dtypes(exclude="number")
@@ -97,10 +107,10 @@ def load_dataset(path: str):
 
     results["top_correlations"] = top_correlations
 
-    # histograms
+    # histograms for numeric variables
     histograms = []
 
-    for col in numeric.columns[:5]:
+    for col in numeric.columns:
         values = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype=float, copy=False)
         finite_values = values[np.isfinite(values)]
 
@@ -114,14 +124,51 @@ def load_dataset(path: str):
             continue
 
         counts, bins = np.histogram(finite_values, bins=10)
+        labels = [
+            f"{float(bins[index]):.3f} - {float(bins[index + 1]):.3f}"
+            for index in range(len(bins) - 1)
+        ]
 
         histograms.append({
             "type": "histogram",
             "column": col,
-            "labels": bins[:-1].tolist(),
+            "labels": labels,
             "data": counts.tolist()
         })
 
     results["histograms"] = histograms
+
+    # pie charts for categorical variables
+    categorical_pie_charts = []
+
+    for col in categorical.columns:
+        value_counts = (
+            categorical[col]
+            .dropna()
+            .astype(str)
+            .value_counts()
+        )
+
+        if value_counts.empty:
+            continue
+
+        top_counts = value_counts.head(8)
+        remaining = int(value_counts.iloc[8:].sum())
+
+        labels = top_counts.index.tolist()
+        data = top_counts.values.astype(int).tolist()
+
+        if remaining > 0:
+            labels.append("Other")
+            data.append(remaining)
+
+        categorical_pie_charts.append({
+            "type": "pie",
+            "column": col,
+            "labels": labels,
+            "data": data,
+        })
+
+    results["categorical_pie_charts"] = categorical_pie_charts
 
     return _json_safe(results)
