@@ -139,6 +139,9 @@ def generate_chart(
     if x not in df.columns:
         return {"error": f"Column {x} not found"}
 
+    if chart_type == "histogram" and not pd.api.types.is_numeric_dtype(df[x]):
+        chart_type = "bar" # fallback to bar chart for non-numeric histogram
+
     # Histogram
     if chart_type == "histogram":
 
