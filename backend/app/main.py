@@ -13,6 +13,10 @@ from config import SUPABASE_URL, SUPABASE_KEY, FRONT_URL
 
 app = FastAPI()
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+SAMPLE_DATASET_URL = os.getenv(
+    "SAMPLE_DATASET_URL",
+    "https://jffveitzaqlqrpypjtov.supabase.co/storage/v1/object/public/datasets/sample.csv",
+)
 
 
 # Enable CORS to allow frontend requests
@@ -52,6 +56,25 @@ def upload_file_endpoint(file: UploadFile, conversation_id: Optional[str] = "def
         return {"status": "error uploading file"}
 
     return {"status": "dataset loaded", "dataset": load_result}
+
+
+@app.post("/load-sample")
+def load_sample_dataset_endpoint(
+    conversation_id: Optional[str] = "default",
+    file_url: Optional[str] = None,
+):
+    """Load a public sample dataset URL and bind it to a conversation."""
+
+    resolved_file_url = (file_url or SAMPLE_DATASET_URL).strip()
+    load_result = load_dataset(path=resolved_file_url)
+    clear_conversations()
+    set_file_url(conversation_id=conversation_id, url=resolved_file_url)
+
+    return {
+        "status": "sample dataset loaded",
+        "dataset": load_result,
+        "file_url": resolved_file_url,
+    }
 
 
 class ChatRequest(BaseModel):

@@ -40,6 +40,13 @@
   animation: rise-in 0.45s ease;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
 .badge {
   margin: 0;
   color: var(--teal);
@@ -98,6 +105,29 @@
   inset: 0;
   opacity: 0;
   cursor: pointer;
+}
+
+.sample-button {
+  border: 1px solid #fed7aa;
+  border-radius: 11px;
+  background: #fff7ed;
+  color: #9a3412;
+  padding: 0.72rem 1.05rem;
+  font: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.sample-button:hover:not(:disabled) {
+  background: #ffedd5;
+  transform: translateY(-1px);
+}
+
+.sample-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .upload-error {
@@ -634,6 +664,14 @@ th {
   }
 
   .upload-button {
+    width: fit-content;
+  }
+
+  .header-actions {
+    width: 100%;
+  }
+
+  .sample-button {
     width: fit-content;
   }
 

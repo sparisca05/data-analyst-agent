@@ -1,12 +1,15 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from urllib.parse import urlparse
 
 FILE_URL_CACHE = {}
 
 
 def _read_dataframe(path: str) -> pd.DataFrame:
-    extension = Path(path).suffix.lower()
+    parsed_url = urlparse(path)
+    source_path = parsed_url.path if parsed_url.scheme in {"http", "https"} else path
+    extension = Path(source_path).suffix.lower()
     if extension == ".csv":
         return pd.read_csv(path)
     if extension in {".xlsx", ".xls"}:

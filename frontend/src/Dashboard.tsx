@@ -50,6 +50,9 @@ function Dashboard() {
 
 	const apiBaseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 	const mcpBaseUrl = import.meta.env.VITE_MCP_URL ?? 'http://localhost:8001'
+	const sampleDatasetUrl =
+		import.meta.env.VITE_SAMPLE_DATASET_URL ??
+		'https://jffveitzaqlqrpypjtov.supabase.co/storage/v1/object/public/datasets/sample.csv'
 
 	const previewRows = useMemo(() => rows.slice(0, 6), [rows])
 	const detectedColumns = useMemo(() => (rows[0] ? Object.keys(rows[0]) : []), [rows])
@@ -433,6 +436,80 @@ function Dashboard() {
 		}
 	}
 
+	const handleUseSampleDataset = async () => {
+		if (!serversReady || serversChecking || uploading) {
+			setUploadError('Services are still warming up. Please wait a moment and try again.')
+			return
+		}
+
+		const nextConversationId = createConversationId()
+
+		setUploadError('')
+		setUploading(true)
+		setAgentReady(false)
+		setConversationId(nextConversationId)
+
+		try {
+			const sampleResponse = await fetch(sampleDatasetUrl)
+			if (!sampleResponse.ok) {
+				throw new Error('Could not download the sample dataset file.')
+			}
+
+			const sampleBlob = await sampleResponse.blob()
+			const sampleFile = new File([sampleBlob], 'sample.csv', {
+				type: sampleBlob.type || 'text/csv',
+			})
+
+			const parsedRows = await parseDatasetFile(sampleFile)
+			if (parsedRows.length === 0) {
+				throw new Error('The sample dataset appears to be empty.')
+			}
+
+			const localEdaSummary = buildEdaSummary(parsedRows)
+			setRows(parsedRows)
+			setEda(localEdaSummary)
+			setDatasetName('sample.csv (example)')
+			setDatasetLoaded(true)
+
+			const backendResponse = await fetch(
+				`${apiBaseUrl}/load-sample?conversation_id=${encodeURIComponent(nextConversationId)}`,
+				{ method: 'POST' },
+			)
+
+			if (!backendResponse.ok) {
+				throw new Error('Sample dataset parsed locally, but backend setup failed.')
+			}
+
+			const backendPayload = await backendResponse.json()
+			const backendEdaSummary = buildEdaSummaryFromBackend(backendPayload?.dataset, parsedRows)
+			const resolvedEdaSummary = backendEdaSummary ?? localEdaSummary
+			setEda(resolvedEdaSummary)
+
+			setAgentReady(true)
+			setChatMessages([
+				{
+					id: Date.now(),
+					role: 'assistant',
+					text: `Sample dataset loaded successfully. I detected ${resolvedEdaSummary.rows} rows, ${resolvedEdaSummary.columns} columns, and ${resolvedEdaSummary.numericColumns} numeric columns. Ask me anything about this data.`,
+				},
+			])
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'Unable to load the sample dataset.'
+			setUploadError(message)
+			setDatasetName('')
+			setRows([])
+			setEda(null)
+			setSelectedHistogramColumn('')
+			setSelectedCategoricalColumn('')
+			setDatasetLoaded(false)
+			setChatMessages([])
+			setConversationId(createConversationId())
+			setAgentReady(false)
+		} finally {
+			setUploading(false)
+		}
+	}
+
 	const handleAsk = (presetQuestion?: string) => {
 		const question = (presetQuestion ?? chatInput).trim()
 		if (!serversReady || serversChecking || !datasetLoaded || !agentReady || !eda || !question || thinking) {
@@ -529,23 +606,33 @@ function Dashboard() {
 							Upload a file and instantly explore profile metrics, quality checks, distributions, and correlation heatmaps.
 						</p>
 					</div>
-					<label
-						className={`upload-button${uploading || serversChecking || !serversReady ? ' disabled' : ''}`}
-						htmlFor="dataset-upload"
-					>
-						<input
-							id="dataset-upload"
-							type="file"
-							accept=".csv,.xlsx,.xls"
-							onChange={handleDatasetUpload}
+					<div className="header-actions">
+						<label
+							className={`upload-button${uploading || serversChecking || !serversReady ? ' disabled' : ''}`}
+							htmlFor="dataset-upload"
+						>
+							<input
+								id="dataset-upload"
+								type="file"
+								accept=".csv,.xlsx,.xls"
+								onChange={handleDatasetUpload}
+								disabled={uploading || serversChecking || !serversReady}
+							/>
+							{serversChecking
+								? 'Waking up services...'
+								: uploading
+									? 'Loading dataset...'
+									: 'Upload dataset'}
+						</label>
+						<button
+							type="button"
+							className="sample-button"
+							onClick={handleUseSampleDataset}
 							disabled={uploading || serversChecking || !serversReady}
-						/>
-						{serversChecking
-							? 'Waking up services...'
-							: uploading
-								? 'Loading dataset...'
-								: 'Upload dataset'}
-					</label>
+						>
+							{uploading ? 'Loading dataset...' : 'Use sample dataset'}
+						</button>
+					</div>
 				</header>
 
 				<section
