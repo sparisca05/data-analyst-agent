@@ -22,7 +22,9 @@ function Dashboard() {
 	const [uploading, setUploading] = useState(false)
 	const [uploadError, setUploadError] = useState('')
 	const [rows, setRows] = useState<DataRow[]>([])
-	const [eda, setEda] = useState<EdaSummary | null>(null)
+	const [dirtyEda, setDirtyEda] = useState<EdaSummary | null>(null)
+	const [cleanEda, setCleanEda] = useState<EdaSummary | null>(null)
+	const [activeEdaTab, setActiveEdaTab] = useState<'dirty' | 'clean'>('dirty')
 	const [selectedHistogramColumn, setSelectedHistogramColumn] = useState('')
 	const [selectedCategoricalColumn, setSelectedCategoricalColumn] = useState('')
 	const [chatInput, setChatInput] = useState('')
@@ -53,6 +55,16 @@ function Dashboard() {
 	const sampleDatasetUrl =
 		import.meta.env.VITE_SAMPLE_DATASET_URL ??
 		'https://jffveitzaqlqrpypjtov.supabase.co/storage/v1/object/public/datasets/sample.csv'
+
+	const eda = useMemo(() => {
+		if (activeEdaTab === 'clean') {
+			return cleanEda ?? dirtyEda
+		}
+
+		return dirtyEda ?? cleanEda
+	}, [activeEdaTab, dirtyEda, cleanEda])
+
+	const canCompareEda = Boolean(dirtyEda && cleanEda)
 
 	const previewRows = useMemo(() => rows.slice(0, 6), [rows])
 	const detectedColumns = useMemo(() => (rows[0] ? Object.keys(rows[0]) : []), [rows])
@@ -369,6 +381,8 @@ function Dashboard() {
 		setUploadError('')
 		setUploading(true)
 		setAgentReady(false)
+		setCleanEda(null)
+		setActiveEdaTab('dirty')
 		setConversationId(nextConversationId)
 
 		try {
@@ -384,7 +398,7 @@ function Dashboard() {
 
 			const localEdaSummary = buildEdaSummary(parsedRows)
 			setRows(parsedRows)
-			setEda(localEdaSummary)
+			setDirtyEda(localEdaSummary)
 			setDatasetName(file.name)
 			setDatasetLoaded(true)
 			parsedLocally = true
@@ -405,15 +419,16 @@ function Dashboard() {
 
 			const uploadPayload = await uploadResponse.json()
 			const backendEdaSummary = buildEdaSummaryFromBackend(uploadPayload?.dataset, parsedRows)
-			const resolvedEdaSummary = backendEdaSummary ?? localEdaSummary
-			setEda(resolvedEdaSummary)
+			const resolvedCleanEda = backendEdaSummary ?? localEdaSummary
+			setCleanEda(resolvedCleanEda)
+			setActiveEdaTab('clean')
 
 			setAgentReady(true)
 			setChatMessages([
 				{
 					id: Date.now(),
 					role: 'assistant',
-					text: `Dataset loaded successfully. I detected ${resolvedEdaSummary.rows} rows, ${resolvedEdaSummary.columns} columns, and ${resolvedEdaSummary.numericColumns} numeric columns. Ask me anything about this data.`,
+					text: `Dataset loaded successfully. I detected ${resolvedCleanEda.rows} rows, ${resolvedCleanEda.columns} columns, and ${resolvedCleanEda.numericColumns} numeric columns after cleaning. You can compare dirty vs clean EDA in the tabs.`,
 				},
 			])
 		} catch (error) {
@@ -422,7 +437,9 @@ function Dashboard() {
 			if (!parsedLocally) {
 				setDatasetName('')
 				setRows([])
-				setEda(null)
+				setDirtyEda(null)
+				setCleanEda(null)
+				setActiveEdaTab('dirty')
 				setSelectedHistogramColumn('')
 				setSelectedCategoricalColumn('')
 				setDatasetLoaded(false)
@@ -447,6 +464,8 @@ function Dashboard() {
 		setUploadError('')
 		setUploading(true)
 		setAgentReady(false)
+		setCleanEda(null)
+		setActiveEdaTab('dirty')
 		setConversationId(nextConversationId)
 
 		try {
@@ -467,7 +486,7 @@ function Dashboard() {
 
 			const localEdaSummary = buildEdaSummary(parsedRows)
 			setRows(parsedRows)
-			setEda(localEdaSummary)
+			setDirtyEda(localEdaSummary)
 			setDatasetName('sample.csv (example)')
 			setDatasetLoaded(true)
 
@@ -482,15 +501,16 @@ function Dashboard() {
 
 			const backendPayload = await backendResponse.json()
 			const backendEdaSummary = buildEdaSummaryFromBackend(backendPayload?.dataset, parsedRows)
-			const resolvedEdaSummary = backendEdaSummary ?? localEdaSummary
-			setEda(resolvedEdaSummary)
+			const resolvedCleanEda = backendEdaSummary ?? localEdaSummary
+			setCleanEda(resolvedCleanEda)
+			setActiveEdaTab('clean')
 
 			setAgentReady(true)
 			setChatMessages([
 				{
 					id: Date.now(),
 					role: 'assistant',
-					text: `Sample dataset loaded successfully. I detected ${resolvedEdaSummary.rows} rows, ${resolvedEdaSummary.columns} columns, and ${resolvedEdaSummary.numericColumns} numeric columns. Ask me anything about this data.`,
+					text: `Sample dataset loaded successfully. I detected ${resolvedCleanEda.rows} rows, ${resolvedCleanEda.columns} columns, and ${resolvedCleanEda.numericColumns} numeric columns after cleaning. You can compare dirty vs clean EDA in the tabs.`,
 				},
 			])
 		} catch (error) {
@@ -498,7 +518,9 @@ function Dashboard() {
 			setUploadError(message)
 			setDatasetName('')
 			setRows([])
-			setEda(null)
+			setDirtyEda(null)
+			setCleanEda(null)
+			setActiveEdaTab('dirty')
 			setSelectedHistogramColumn('')
 			setSelectedCategoricalColumn('')
 			setDatasetLoaded(false)
@@ -744,7 +766,39 @@ function Dashboard() {
 
 					<section className="card eda-card">
 						<h2>Exploratory Data Analysis</h2>
-						<p className="card-subtitle">The EDA panel appears immediately after file upload.</p>
+						<p className="card-subtitle">Compare local raw-data EDA vs backend cleaned-data EDA.</p>
+
+						{dirtyEda && (
+							<div className="eda-tabs" role="tablist" aria-label="EDA comparison tabs">
+								<button
+									type="button"
+									className={`eda-tab${activeEdaTab === 'dirty' ? ' active' : ''}`}
+									onClick={() => setActiveEdaTab('dirty')}
+									role="tab"
+									aria-selected={activeEdaTab === 'dirty'}
+								>
+									Dirty dataset (local)
+								</button>
+								<button
+									type="button"
+									className={`eda-tab${activeEdaTab === 'clean' ? ' active' : ''}`}
+									onClick={() => setActiveEdaTab('clean')}
+									disabled={!cleanEda}
+									role="tab"
+									aria-selected={activeEdaTab === 'clean'}
+								>
+									Clean dataset (backend)
+								</button>
+							</div>
+						)}
+
+						{canCompareEda && dirtyEda && cleanEda && (
+							<div className="eda-quick-compare" role="status" aria-live="polite">
+								<span>Rows: {dirtyEda.rows.toLocaleString()} → {cleanEda.rows.toLocaleString()}</span>
+								<span>Missing cells: {dirtyEda.missingCells.toLocaleString()} → {cleanEda.missingCells.toLocaleString()}</span>
+								<span>Completeness: {dirtyEda.completeness.toFixed(1)}% → {cleanEda.completeness.toFixed(1)}%</span>
+							</div>
+						)}
 
 						{eda ? (
 							<div className="eda-content">

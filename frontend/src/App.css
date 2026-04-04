@@ -457,6 +457,57 @@
   min-height: 700px;
 }
 
+.eda-tabs {
+  margin-top: 0.8rem;
+  display: inline-flex;
+  gap: 0.45rem;
+  padding: 0.35rem;
+  border: 1px solid #dbe4f2;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.eda-tab {
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #334155;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.42rem 0.7rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.eda-tab.active {
+  border-color: #fdba74;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.eda-tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.eda-quick-compare {
+  margin-top: 0.7rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.eda-quick-compare span {
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.3rem 0.62rem;
+}
+
 .eda-empty {
   margin: 1rem 0 0;
   border: 1px dashed #cbd5e1;
