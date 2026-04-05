@@ -228,6 +228,52 @@
   background: #0f766e;
 }
 
+.workflow-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.workflow-step {
+  border: 1px solid #dbe4f2;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 0.55rem 0.65rem;
+  display: grid;
+  gap: 0.32rem;
+}
+
+.workflow-step.done {
+  border-color: #99f6e4;
+  background: #f0fdfa;
+}
+
+.workflow-step-index {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+}
+
+.workflow-step.done .workflow-step-index {
+  color: #0f766e;
+  border-color: #5eead4;
+  background: #ccfbf1;
+}
+
+.workflow-step p {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #334155;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.7fr);
@@ -508,6 +554,95 @@
   padding: 0.3rem 0.62rem;
 }
 
+.cleaning-report-panel {
+  margin-top: 0.8rem;
+  border: 1px solid #dbe4f2;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.quality-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.quality-status-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  padding: 0.5rem 0.58rem;
+  display: grid;
+  gap: 0.32rem;
+}
+
+.quality-status-item p {
+  margin: 0;
+  color: #0f172a;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.quality-status-item span {
+  display: inline-block;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 0.18rem 0.5rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.quality-ok {
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+
+.quality-fail {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.transformation-log {
+  border-top: 1px dashed #cbd5e1;
+  padding-top: 0.65rem;
+}
+
+.transformation-log h3 {
+  margin: 0;
+  color: #1e293b;
+  font-size: 0.9rem;
+}
+
+.transformation-log ul {
+  margin: 0.55rem 0 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.transformation-log li {
+  color: #334155;
+  font-size: 0.82rem;
+  line-height: 1.3;
+}
+
+.active-view-label {
+  margin: 0;
+  color: #0f766e;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.chart-note-wrapper {
+  display: grid;
+  align-content: start;
+}
+
 .eda-empty {
   margin: 1rem 0 0;
   border: 1px dashed #cbd5e1;
@@ -728,6 +863,11 @@ th {
 
   .metrics-grid,
   .charts-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-strip,
+  .quality-status-grid {
     grid-template-columns: 1fr;
   }
 

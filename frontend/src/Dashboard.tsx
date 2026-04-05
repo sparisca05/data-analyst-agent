@@ -13,7 +13,62 @@ import { buildEdaSummary, buildEdaSummaryFromBackend, formatCell, generateAssist
 import ChatChart from './components/ChatChart'
 import CorrelationHeatmap from './components/CorrelationHeatmap'
 import MetricCard from './components/MetricCard'
-import type { ChatMessage, DataRow, EdaSummary } from './utils/types'
+import type { ChatMessage, CleaningReport, DataRow, EdaSummary } from './utils/types'
+
+const QUALITY_LABELS: Array<{ key: keyof CleaningReport['quality_before']['dimensions']; label: string }> = [
+	{ key: 'completitud', label: 'Completitud' },
+	{ key: 'consistencia', label: 'Consistencia' },
+	{ key: 'exactitud', label: 'Exactitud' },
+	{ key: 'unicidad', label: 'Unicidad' },
+	{ key: 'validez', label: 'Validez' },
+	{ key: 'integridad_referencial', label: 'Integridad referencial' },
+	{ key: 'uniformidad_formato', label: 'Uniformidad de formato' },
+]
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null
+}
+
+function normalizePreviewRows(value: unknown): DataRow[] {
+	if (!Array.isArray(value)) {
+		return []
+	}
+
+	const normalized: DataRow[] = []
+
+	for (const row of value) {
+		if (!isRecord(row)) {
+			continue
+		}
+
+		const next: DataRow = {}
+		for (const [key, cell] of Object.entries(row)) {
+			if (cell === null || typeof cell === 'string' || typeof cell === 'number') {
+				next[key] = cell
+			} else {
+				next[key] = cell === undefined ? null : String(cell)
+			}
+		}
+
+		normalized.push(next)
+	}
+
+	return normalized
+}
+
+function parseCleaningReport(value: unknown): CleaningReport | null {
+	if (!isRecord(value)) {
+		return null
+	}
+
+	const qualityBefore = value.quality_before
+	const qualityAfter = value.quality_after
+	if (!isRecord(qualityBefore) || !isRecord(qualityAfter)) {
+		return null
+	}
+
+	return value as CleaningReport
+}
 
 function Dashboard() {
 	const [datasetName, setDatasetName] = useState('')
@@ -22,8 +77,11 @@ function Dashboard() {
 	const [uploading, setUploading] = useState(false)
 	const [uploadError, setUploadError] = useState('')
 	const [rows, setRows] = useState<DataRow[]>([])
+	const [cleanPreviewRows, setCleanPreviewRows] = useState<DataRow[]>([])
 	const [dirtyEda, setDirtyEda] = useState<EdaSummary | null>(null)
 	const [cleanEda, setCleanEda] = useState<EdaSummary | null>(null)
+	const [cleaningReport, setCleaningReport] = useState<CleaningReport | null>(null)
+
 	const [activeEdaTab, setActiveEdaTab] = useState<'dirty' | 'clean'>('dirty')
 	const [selectedHistogramColumn, setSelectedHistogramColumn] = useState('')
 	const [selectedCategoricalColumn, setSelectedCategoricalColumn] = useState('')
@@ -65,8 +123,21 @@ function Dashboard() {
 	}, [activeEdaTab, dirtyEda, cleanEda])
 
 	const canCompareEda = Boolean(dirtyEda && cleanEda)
+	const workflowSteps = useMemo(
+		() => [
+			{ id: 1, title: 'Dataset loaded', done: datasetLoaded },
+			{ id: 2, title: 'Raw EDA generated', done: Boolean(dirtyEda) },
+			{ id: 3, title: 'Backend cleaning completed', done: Boolean(cleanEda && cleaningReport) },
+			{ id: 4, title: 'Visual exploration enabled', done: Boolean(eda) },
+			{ id: 5, title: 'AI chat enabled', done: agentReady },
+		],
+		[datasetLoaded, dirtyEda, cleanEda, cleaningReport, eda, agentReady],
+	)
 
-	const previewRows = useMemo(() => rows.slice(0, 6), [rows])
+	const previewRows = useMemo(
+		() => (activeEdaTab === 'clean' ? (cleanPreviewRows.length > 0 ? cleanPreviewRows : rows) : rows).slice(0, 6),
+		[activeEdaTab, cleanPreviewRows, rows],
+	)
 	const detectedColumns = useMemo(() => (rows[0] ? Object.keys(rows[0]) : []), [rows])
 	const columnPromptTooltip = useMemo(() => buildColumnTooltip(detectedColumns), [detectedColumns])
 	const previewColumns = useMemo(() => (previewRows[0] ? Object.keys(previewRows[0]) : []), [previewRows])
@@ -290,7 +361,7 @@ function Dashboard() {
 	}, [selectedCategoricalChart])
 
 	useEffect(() => {
-		if (!eda || !missingCanvasRef.current) {
+		if (activeEdaTab !== 'dirty' || !dirtyEda || !missingCanvasRef.current) {
 			if (missingChartRef.current) {
 				missingChartRef.current.destroy()
 				missingChartRef.current = null
@@ -305,11 +376,11 @@ function Dashboard() {
 		missingChartRef.current = new Chart(missingCanvasRef.current, {
 			type: 'bar',
 			data: {
-				labels: eda.missingByColumn.map((item) => item.name),
+				labels: dirtyEda.missingByColumn.map((item) => item.name),
 				datasets: [
 					{
 						label: 'Missing Values',
-						data: eda.missingByColumn.map((item) => item.value),
+						data: dirtyEda.missingByColumn.map((item) => item.value),
 						borderRadius: 6,
 						backgroundColor: '#0f766e',
 					},
@@ -342,7 +413,7 @@ function Dashboard() {
 				missingChartRef.current = null
 			}
 		}
-	}, [eda])
+	}, [activeEdaTab, dirtyEda])
 
 	useEffect(() => {
 		const previousCount = previousChatCountRef.current
@@ -382,6 +453,8 @@ function Dashboard() {
 		setUploading(true)
 		setAgentReady(false)
 		setCleanEda(null)
+		setCleaningReport(null)
+		setCleanPreviewRows([])
 		setActiveEdaTab('dirty')
 		setConversationId(nextConversationId)
 
@@ -420,8 +493,11 @@ function Dashboard() {
 			const uploadPayload = await uploadResponse.json()
 			const backendEdaSummary = buildEdaSummaryFromBackend(uploadPayload?.dataset, parsedRows)
 			const resolvedCleanEda = backendEdaSummary ?? localEdaSummary
+			const parsedReport = parseCleaningReport(uploadPayload?.cleaning)
 			setCleanEda(resolvedCleanEda)
 			setActiveEdaTab('clean')
+			setCleaningReport(parsedReport)
+			setCleanPreviewRows(normalizePreviewRows(parsedReport?.cleaned_preview))
 
 			setAgentReady(true)
 			setChatMessages([
@@ -437,8 +513,10 @@ function Dashboard() {
 			if (!parsedLocally) {
 				setDatasetName('')
 				setRows([])
+				setCleanPreviewRows([])
 				setDirtyEda(null)
 				setCleanEda(null)
+				setCleaningReport(null)
 				setActiveEdaTab('dirty')
 				setSelectedHistogramColumn('')
 				setSelectedCategoricalColumn('')
@@ -465,6 +543,8 @@ function Dashboard() {
 		setUploading(true)
 		setAgentReady(false)
 		setCleanEda(null)
+		setCleaningReport(null)
+		setCleanPreviewRows([])
 		setActiveEdaTab('dirty')
 		setConversationId(nextConversationId)
 
@@ -502,8 +582,12 @@ function Dashboard() {
 			const backendPayload = await backendResponse.json()
 			const backendEdaSummary = buildEdaSummaryFromBackend(backendPayload?.dataset, parsedRows)
 			const resolvedCleanEda = backendEdaSummary ?? localEdaSummary
+			const parsedReport = parseCleaningReport(backendPayload?.cleaning)
+
 			setCleanEda(resolvedCleanEda)
 			setActiveEdaTab('clean')
+			setCleaningReport(parsedReport)
+			setCleanPreviewRows(normalizePreviewRows(parsedReport?.cleaned_preview))
 
 			setAgentReady(true)
 			setChatMessages([
@@ -518,8 +602,10 @@ function Dashboard() {
 			setUploadError(message)
 			setDatasetName('')
 			setRows([])
+			setCleanPreviewRows([])
 			setDirtyEda(null)
 			setCleanEda(null)
+			setCleaningReport(null)
 			setActiveEdaTab('dirty')
 			setSelectedHistogramColumn('')
 			setSelectedCategoricalColumn('')
@@ -690,6 +776,17 @@ function Dashboard() {
 					</section>
 				)}
 
+					{datasetLoaded && (
+						<section className="workflow-strip" aria-label="Dataset analysis workflow">
+							{workflowSteps.map((step) => (
+								<div key={step.id} className={`workflow-step${step.done ? ' done' : ''}`}>
+									<span className="workflow-step-index">{step.id}</span>
+									<p>{step.title}</p>
+								</div>
+							))}
+						</section>
+					)}
+
 				<div className="dashboard-grid">
 					<section className="card chat-card">
 						<h2>Ask the AI analyst</h2>
@@ -766,7 +863,7 @@ function Dashboard() {
 
 					<section className="card eda-card">
 						<h2>Exploratory Data Analysis</h2>
-						<p className="card-subtitle">Compare local raw-data EDA vs backend cleaned-data EDA.</p>
+						<p className="card-subtitle">Navigate raw and cleaned dataset states, then inspect what changed during cleaning.</p>
 
 						{dirtyEda && (
 							<div className="eda-tabs" role="tablist" aria-label="EDA comparison tabs">
@@ -800,8 +897,44 @@ function Dashboard() {
 							</div>
 						)}
 
+						{cleaningReport && (
+							<div className="cleaning-report-panel">
+								<div className="quality-status-grid">
+									{QUALITY_LABELS.map((dimension) => {
+										const beforeOk = cleaningReport.quality_before.dimensions[dimension.key]
+										const afterOk = cleaningReport.quality_after.dimensions[dimension.key]
+
+										return (
+											<div key={dimension.key} className="quality-status-item">
+												<p>{dimension.label}</p>
+												<span className={beforeOk ? 'quality-ok' : 'quality-fail'}>
+													Before: {beforeOk ? 'OK' : 'Issue'}
+												</span>
+												<span className={afterOk ? 'quality-ok' : 'quality-fail'}>
+													After: {afterOk ? 'OK' : 'Issue'}
+												</span>
+											</div>
+										)
+									})}
+								</div>
+								{cleaningReport.transformations.length > 0 && (
+									<div className="transformation-log">
+										<h3>Cleaning transformations applied</h3>
+										<ul>
+											{cleaningReport.transformations.slice(0, 10).map((item) => (
+												<li key={item}>{item}</li>
+											))}
+										</ul>
+									</div>
+								)}
+							</div>
+						)}
+
 						{eda ? (
 							<div className="eda-content">
+								<p className="active-view-label">
+									Viewing: {activeEdaTab === 'dirty' ? 'Before cleaning (raw dataset)' : 'After cleaning (backend output)'}
+								</p>
 								<div className="metrics-grid">
 									<MetricCard label="Rows" value={eda.rows.toLocaleString()} />
 									<MetricCard label="Columns" value={eda.columns.toLocaleString()} />
@@ -812,12 +945,19 @@ function Dashboard() {
 								</div>
 
 								<div className="charts-grid">
-									<div className="chart-wrapper">
-										<h3>Missing values by column</h3>
-										<div className="chart-canvas-wrap">
-											<canvas ref={missingCanvasRef} aria-label="Missing values chart" />
+									{activeEdaTab === 'dirty' ? (
+										<div className="chart-wrapper">
+											<h3>Missing values by column</h3>
+											<div className="chart-canvas-wrap">
+												<canvas ref={missingCanvasRef} aria-label="Missing values chart" />
+											</div>
 										</div>
-									</div>
+									) : (
+										<div className="chart-wrapper chart-note-wrapper">
+											<h3>Missing values by column</h3>
+											<p className="no-chart">This chart is shown only for the raw dataset (before cleaning).</p>
+										</div>
+									)}
 
 									<div className="chart-wrapper">
 										<h3>Numeric distributions</h3>

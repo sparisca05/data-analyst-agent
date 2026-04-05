@@ -474,10 +474,24 @@ def clean_dataset(path: str):
         if non_null.empty:
             continue
 
+        # Agregar porcentajes como candidatos a numéricos
+        if non_null.str.endswith("%").any():
+            percentage_candidate = non_null.str.rstrip("%").replace("", pd.NA)
+            percentage_numeric = pd.to_numeric(percentage_candidate, errors="coerce")
+            percentage_ratio = float(percentage_numeric.notna().mean())
+            if percentage_ratio >= TYPE_CONVERSION_THRESHOLD:
+                df_cleaned[col] = percentage_numeric / 100
+                transformations.append(f"Paso 4: '{col}' convertido a porcentaje numerico.")
+                continue
+
         numeric_candidate = pd.to_numeric(non_null, errors="coerce")
         numeric_ratio = float(numeric_candidate.notna().mean())
+        print(f"Columna '{col}': ratio de parseo numerico = {numeric_ratio:.2f}")
+        print(f"Valores originales: {non_null.head(5).tolist()}")
+        print(f"Valores parseados: {numeric_candidate.head(5).tolist()}")
 
         if numeric_ratio >= TYPE_CONVERSION_THRESHOLD:
+            print(f"Columna '{col}' convertida a numerico.")
             df_cleaned[col] = pd.to_numeric(df_cleaned[col], errors="coerce")
             transformations.append(f"Paso 4: '{col}' convertido a numerico.")
             continue
@@ -486,8 +500,8 @@ def clean_dataset(path: str):
             date_candidate = pd.to_datetime(non_null, errors="coerce")
             date_ratio = float(date_candidate.notna().mean())
             if date_ratio >= TYPE_CONVERSION_THRESHOLD:
-                df_cleaned[col] = pd.to_datetime(df_cleaned[col], errors="coerce")
-                transformations.append(f"Paso 4: '{col}' convertido a datetime.")
+                df_cleaned[col] = pd.to_datetime(df_cleaned[col], errors="coerce").dt.strftime("%Y-%m-%d")
+                transformations.append(f"Paso 4: '{col}' convertido a fecha (YYYY-MM-DD).")
 
     # Paso 5: estandarizar formatos y valores de texto
     for col in df_cleaned.select_dtypes(include=["object", "string"]).columns:
@@ -514,6 +528,8 @@ def clean_dataset(path: str):
 
         if affected > 0:
             df_cleaned[col] = clipped
+            # Volver a eliminar duplicados que puedan haber surgido por el tratamiento de outliers
+            df_cleaned = df_cleaned.drop_duplicates().copy()
             transformations.append(
                 f"Paso 6: {affected} outliers tratados en '{col}' por winsorizacion IQR."
             )
@@ -600,5 +616,6 @@ def clean_dataset(path: str):
             "cleaned_path": str(output_file),
             "original_shape": {"rows": int(df.shape[0]), "columns": int(df.shape[1])},
             "cleaned_shape": {"rows": int(df_cleaned.shape[0]), "columns": int(df_cleaned.shape[1])},
+            "cleaned_preview": df_cleaned.head(6).to_dict(orient="records"),
         }
     )

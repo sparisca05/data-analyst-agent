@@ -43,6 +43,37 @@ export type EdaSummary = {
 	heatmap: HeatmapData | null
 }
 
+export type QualityDimensions = {
+	completitud: boolean
+	consistencia: boolean
+	exactitud: boolean
+	unicidad: boolean
+	validez: boolean
+	integridad_referencial: boolean
+	uniformidad_formato: boolean
+}
+
+export type QualityReport = {
+	is_clean: boolean
+	dimensions: QualityDimensions
+	metrics: Record<string, unknown>
+}
+
+export type DatasetShape = {
+	rows: number
+	columns: number
+}
+
+export type CleaningReport = {
+	quality_before: QualityReport
+	quality_after: QualityReport
+	transformations: string[]
+	cleaned_path: string
+	original_shape: DatasetShape
+	cleaned_shape: DatasetShape
+	cleaned_preview?: DataRow[]
+}
+
 export type ChatPoint = {
 	x: number | string
 	y: number | string

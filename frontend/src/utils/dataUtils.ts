@@ -33,7 +33,7 @@ export function formatCell(value: CellValue): string {
 		return '—'
 	}
 	if (typeof value === 'number') {
-		return Number.isInteger(value) ? value.toString() : value.toFixed(3)
+		return Number.isInteger(value) ? value.toString() : value.toFixed(2)
 	}
 	return value
 }
@@ -48,7 +48,7 @@ export function getFileExtension(fileName: string): string {
 
 export async function parseDatasetFile(file: File): Promise<DataRow[]> {
 	const bytes = await file.arrayBuffer()
-	const workbook = XLSX.read(bytes, { type: 'array' })
+	const workbook = XLSX.read(bytes, { type: 'array', cellDates: true })
 	const firstSheetName = workbook.SheetNames[0]
 	if (!firstSheetName) {
 		return []
@@ -96,7 +96,11 @@ function normalizeCell(value: unknown): CellValue {
 	}
 
 	if (value instanceof Date) {
-		return value.toISOString()
+		const year = value.getUTCFullYear()
+		const month = String(value.getUTCMonth() + 1).padStart(2, '0')
+		const day = String(value.getUTCDate()).padStart(2, '0')
+		// Keep date-only representation stable regardless of local timezone.
+		return `${year}-${month}-${day}`
 	}
 
 	const text = String(value).trim()
@@ -143,9 +147,8 @@ export function buildEdaSummary(inputRows: DataRow[]): EdaSummary {
 
 		missingByColumn.push({ name: column, value: columnMissing })
 	}
-
 	const numericColumns = columns.filter((column) => (numericByColumn.get(column)?.length ?? 0) > 0)
-	const numericStats = numericColumns.slice(0, 8).map((column) => {
+	const numericStats = numericColumns.map((column) => {
 		const values = numericByColumn.get(column) ?? []
 		const summary = summarizeNumericValues(values)
 		return {
@@ -343,16 +346,15 @@ function summarizeNumericValues(values: number[]): { min: number; max: number; m
 }
 
 function buildHeatmap(numericColumns: string[], rows: DataRow[]): HeatmapData | null {
-	const selectedColumns = numericColumns.slice(0, 6)
-	if (selectedColumns.length < 2) {
+	if (numericColumns.length < 2) {
 		return null
 	}
 
-	const matrix = selectedColumns.map((leftColumn) =>
-		selectedColumns.map((rightColumn) => correlationForColumns(rows, leftColumn, rightColumn)),
+	const matrix = numericColumns.map((leftColumn) =>
+		numericColumns.map((rightColumn) => correlationForColumns(rows, leftColumn, rightColumn)),
 	)
 
-	return { columns: selectedColumns, matrix }
+	return { columns: numericColumns, matrix }
 }
 
 function correlationForColumns(rows: DataRow[], leftColumn: string, rightColumn: string): number {
